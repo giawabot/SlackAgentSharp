@@ -9,6 +9,7 @@ public sealed class SlackOutputStreamManager
     private readonly string channelId;
     private readonly string threadTimestamp;
     private readonly string recipientUserId;
+    // Guards lazy stream-session creation so concurrent chunks don't start multiple Slack streams.
     private readonly SemaphoreSlim startSemaphore = new(1, 1);
     private SlackStreamSession? currentSession;
     private int hadOutput;
@@ -17,6 +18,13 @@ public sealed class SlackOutputStreamManager
     private bool startNotified;
     private StringBuilder? pendingBuffer;
 
+    /// <summary>
+    /// Creates a streaming output manager for a Slack thread.
+    /// </summary>
+    /// <param name="slackClient">Slack client used for stream operations.</param>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Slack thread timestamp.</param>
+    /// <param name="recipientUserId">Optional recipient user ID.</param>
     public SlackOutputStreamManager(
         SlackClient slackClient,
         string channelId,
@@ -31,6 +39,10 @@ public sealed class SlackOutputStreamManager
 
     public bool HadOutput => Volatile.Read(ref hadOutput) == 1;
 
+    /// <summary>
+    /// Starts a new output block and resets streaming state.
+    /// </summary>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public async Task OnOutputBlockStarted(CancellationToken cancellationToken)
     {
         if (currentSession is not null)
@@ -45,11 +57,22 @@ public sealed class SlackOutputStreamManager
         pendingBuffer = new StringBuilder();
     }
 
+    /// <summary>
+    /// Handles a streamed output chunk.
+    /// </summary>
+    /// <param name="chunk">Output text chunk.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public Task OnOutputChunk(string chunk, CancellationToken cancellationToken)
     {
         return OnOutputChunk(chunk, null, cancellationToken);
     }
 
+    /// <summary>
+    /// Handles a streamed output chunk and triggers an optional callback when output starts.
+    /// </summary>
+    /// <param name="chunk">Output text chunk.</param>
+    /// <param name="outputStarted">Optional callback invoked when output starts.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public async Task OnOutputChunk(
         string chunk,
         Func<CancellationToken, Task>? outputStarted,
@@ -69,6 +92,7 @@ public sealed class SlackOutputStreamManager
         {
             pendingBuffer ??= new StringBuilder();
             pendingBuffer.Append(chunk);
+            // We defer until we have enough characters to know whether this block is tool metadata.
             var trimmed = pendingBuffer.ToString().TrimStart();
             if (trimmed.Length < ToolCallPrefix.Length)
             {
@@ -78,6 +102,7 @@ public sealed class SlackOutputStreamManager
             decisionMade = true;
             if (trimmed.StartsWith(ToolCallPrefix, StringComparison.Ordinal))
             {
+                // Tool-call envelopes are internal protocol data and should not be mirrored to Slack.
                 suppressBlock = true;
                 pendingBuffer.Clear();
                 return;
@@ -118,6 +143,10 @@ public sealed class SlackOutputStreamManager
         }
     }
 
+    /// <summary>
+    /// Ends the current output block and stops any active stream session.
+    /// </summary>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public async Task OnOutputBlockEnded(CancellationToken cancellationToken)
     {
         if (currentSession is null)
@@ -136,6 +165,10 @@ public sealed class SlackOutputStreamManager
         pendingBuffer?.Clear();
     }
 
+    /// <summary>
+    /// Completes output streaming for the current block.
+    /// </summary>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public Task CompleteAsync(CancellationToken cancellationToken)
     {
         return OnOutputBlockEnded(cancellationToken);

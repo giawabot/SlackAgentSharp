@@ -27,6 +27,7 @@ internal sealed class SlackStreamSession
         {
             SingleReader = true,
             SingleWriter = true,
+            // Backpressure producer writes instead of unbounded buffering.
             FullMode = BoundedChannelFullMode.Wait
         });
         consumerTask = Task.Run(() => ConsumeAsync(consumerCancellation.Token));
@@ -104,6 +105,7 @@ internal sealed class SlackStreamSession
         }
 
         channel.Writer.TryComplete();
+        // If caller cancels shutdown, also cancel the consumer so await consumerTask can unwind.
         using var cancellationRegistration = cancellationToken.Register(() => consumerCancellation.Cancel());
         try
         {

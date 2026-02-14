@@ -17,6 +17,10 @@ public sealed class SlackClient : IDisposable
     private readonly int maxResponseBodyBytes;
     private bool disposed;
 
+    /// <summary>
+    /// Creates a Slack API client using the provided options.
+    /// </summary>
+    /// <param name="options">Client configuration and authentication settings.</param>
     public SlackClient(SlackOptions options)
     {
         if (options is null)
@@ -70,6 +74,13 @@ public sealed class SlackClient : IDisposable
         };
     }
 
+    /// <summary>
+    /// Opens a direct message channel with a user and sends a message.
+    /// </summary>
+    /// <param name="userId">Slack user ID to message.</param>
+    /// <param name="message">Message text to send.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the message; otherwise <c>false</c>.</returns>
     public async Task<bool> SendDirectMessageAsync(
         string userId,
         string message,
@@ -96,6 +107,12 @@ public sealed class SlackClient : IDisposable
         return response.Ok;
     }
 
+    /// <summary>
+    /// Opens or retrieves a direct message channel for the specified user.
+    /// </summary>
+    /// <param name="userId">Slack user ID to open a DM with.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>The channel ID when successful; otherwise <c>null</c>.</returns>
     public async Task<string?> OpenDirectMessageChannelAsync(
         string userId,
         CancellationToken cancellationToken)
@@ -122,6 +139,13 @@ public sealed class SlackClient : IDisposable
         return openResponse.Channel?.Id;
     }
 
+    /// <summary>
+    /// Gets messages from a Slack conversation, optionally filtered by oldest timestamp.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="oldestTimestamp">Oldest timestamp boundary, or <c>null</c>.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>A read-only list of messages, or an empty list on failure.</returns>
     public async Task<IReadOnlyList<SlackMessage>> GetConversationMessagesAsync(
         string channelId,
         string? oldestTimestamp,
@@ -161,6 +185,14 @@ public sealed class SlackClient : IDisposable
         return historyResponse.Messages ?? [];
     }
 
+    /// <summary>
+    /// Gets replies in a Slack thread, optionally filtered by oldest timestamp.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Thread timestamp.</param>
+    /// <param name="oldestTimestamp">Oldest timestamp boundary, or <c>null</c>.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>A read-only list of thread messages, or an empty list on failure.</returns>
     public async Task<IReadOnlyList<SlackMessage>> GetConversationRepliesAsync(
         string channelId,
         string threadTimestamp,
@@ -208,6 +240,13 @@ public sealed class SlackClient : IDisposable
         return repliesResponse.Messages ?? [];
     }
 
+    /// <summary>
+    /// Sends a message to a Slack channel.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="message">Message text to send.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the message; otherwise <c>false</c>.</returns>
     public async Task<bool> SendMessageAsync(
         string channelId,
         string message,
@@ -228,6 +267,14 @@ public sealed class SlackClient : IDisposable
         return response.Ok;
     }
 
+    /// <summary>
+    /// Sends a message to an existing Slack thread.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Thread timestamp.</param>
+    /// <param name="message">Message text to send.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the message; otherwise <c>false</c>.</returns>
     public async Task<bool> SendThreadMessageAsync(
         string channelId,
         string threadTimestamp,
@@ -256,6 +303,14 @@ public sealed class SlackClient : IDisposable
         return response.Ok;
     }
 
+    /// <summary>
+    /// Sets status metadata for an assistant thread in Slack.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Thread timestamp.</param>
+    /// <param name="status">Status string understood by Slack.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the update; otherwise <c>false</c>.</returns>
     public async Task<bool> SetAssistantThreadStatusAsync(
         string channelId,
         string threadTimestamp,
@@ -279,6 +334,16 @@ public sealed class SlackClient : IDisposable
         return response.Ok;
     }
 
+    /// <summary>
+    /// Starts a Slack streaming message session.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Thread timestamp.</param>
+    /// <param name="markdownText">Initial markdown text, or <c>null</c>.</param>
+    /// <param name="recipientTeamId">Optional recipient team ID.</param>
+    /// <param name="recipientUserId">Optional recipient user ID.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>The stream timestamp when successful; otherwise <c>null</c>.</returns>
     public async Task<string?> StartMessageStreamAsync(
         string channelId,
         string threadTimestamp,
@@ -304,6 +369,14 @@ public sealed class SlackClient : IDisposable
         return response.Ok ? response.Timestamp : null;
     }
 
+    /// <summary>
+    /// Appends markdown text to an active Slack streaming message.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="streamTimestamp">Streaming message timestamp.</param>
+    /// <param name="markdownText">Markdown text to append.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the append; otherwise <c>false</c>.</returns>
     public async Task<bool> AppendMessageStreamAsync(
         string channelId,
         string streamTimestamp,
@@ -332,6 +405,14 @@ public sealed class SlackClient : IDisposable
         return response.Ok;
     }
 
+    /// <summary>
+    /// Stops an active Slack streaming message.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="streamTimestamp">Streaming message timestamp.</param>
+    /// <param name="markdownText">Optional final markdown text.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the stop request; otherwise <c>false</c>.</returns>
     public async Task<bool> StopMessageStreamAsync(
         string channelId,
         string streamTimestamp,
@@ -355,6 +436,13 @@ public sealed class SlackClient : IDisposable
         return response.Ok;
     }
 
+    /// <summary>
+    /// Sends a message and returns the Slack timestamp when available.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="message">Message text to send.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>The message timestamp when successful; otherwise <c>null</c>.</returns>
     public async Task<string?> SendMessageWithTimestampAsync(
         string channelId,
         string message,
@@ -375,6 +463,15 @@ public sealed class SlackClient : IDisposable
         return response.Ok ? response.Timestamp : null;
     }
 
+    /// <summary>
+    /// Sends a block-based message to Slack.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="message">Fallback message text, or <c>null</c>.</param>
+    /// <param name="blocks">Slack block payload.</param>
+    /// <param name="threadTimestamp">Optional thread timestamp.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns>The message timestamp when successful; otherwise <c>null</c>.</returns>
     public async Task<string?> SendMessageWithBlocksAsync(
         string channelId,
         string? message,
@@ -399,6 +496,15 @@ public sealed class SlackClient : IDisposable
         return response.Ok ? response.Timestamp : null;
     }
 
+    /// <summary>
+    /// Updates an existing Slack message with new block content.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="messageTimestamp">Timestamp of the message to update.</param>
+    /// <param name="message">Optional fallback text.</param>
+    /// <param name="blocks">Updated Slack block payload.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the update; otherwise <c>false</c>.</returns>
     public async Task<bool> UpdateMessageBlocksAsync(
         string channelId,
         string messageTimestamp,
@@ -428,6 +534,9 @@ public sealed class SlackClient : IDisposable
         return response.Ok;
     }
 
+    /// <summary>
+    /// Disposes the underlying HTTP client and releases resources.
+    /// </summary>
     public void Dispose()
     {
         if (disposed)
@@ -569,12 +678,14 @@ public sealed class SlackClient : IDisposable
         for (var attempt = 0; attempt <= transientRetryCount; attempt++)
         {
             using var request = requestFactory();
+            // Combine caller cancellation with per-attempt timeout to bound each retry window.
             using var timeoutToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutToken.CancelAfter(requestTimeout);
             try
             {
                 var response = await httpClient.SendAsync(
                     request,
+                    // Start processing once headers arrive; body size is enforced separately below.
                     HttpCompletionOption.ResponseHeadersRead,
                     timeoutToken.Token);
 
@@ -618,6 +729,7 @@ public sealed class SlackClient : IDisposable
 
     private async Task<string?> TryReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
     {
+        // Fast-path reject when server advertises a body larger than our safety cap.
         if (content.Headers.ContentLength is long length && length > maxResponseBodyBytes)
         {
             return null;
@@ -639,6 +751,7 @@ public sealed class SlackClient : IDisposable
             totalBytesRead += read;
             if (totalBytesRead > maxResponseBodyBytes)
             {
+                // Enforce limit even when Content-Length is missing or incorrect.
                 return null;
             }
 

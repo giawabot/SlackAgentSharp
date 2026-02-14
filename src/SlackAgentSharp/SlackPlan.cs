@@ -7,6 +7,12 @@ public sealed class SlackPlan
     private readonly string threadTimestamp;
     private string? messageTimestamp;
 
+    /// <summary>
+    /// Creates a Slack plan publisher for a channel thread.
+    /// </summary>
+    /// <param name="slackClient">Slack client used for message operations.</param>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Parent thread timestamp.</param>
     public SlackPlan(SlackClient slackClient, string channelId, string threadTimestamp)
     {
         this.slackClient = slackClient ?? throw new ArgumentNullException(nameof(slackClient));
@@ -14,6 +20,11 @@ public sealed class SlackPlan
         this.threadTimestamp = threadTimestamp ?? throw new ArgumentNullException(nameof(threadTimestamp));
     }
 
+    /// <summary>
+    /// Sends the initial plan message if one has not already been sent.
+    /// </summary>
+    /// <param name="plan">Plan payload to publish.</param>
+    /// <param name="token">Token used to cancel the operation.</param>
     public Task SendInitialAsync(SlackTaskPlan plan, CancellationToken token)
     {
         if (!string.IsNullOrWhiteSpace(messageTimestamp))
@@ -24,6 +35,11 @@ public sealed class SlackPlan
         return SendAsync(plan, token, isUpdate: false);
     }
 
+    /// <summary>
+    /// Sends or updates the plan message with current task states.
+    /// </summary>
+    /// <param name="plan">Plan payload to publish.</param>
+    /// <param name="token">Token used to cancel the operation.</param>
     public Task SendTaskUpdatesAsync(SlackTaskPlan plan, CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(messageTimestamp))
