@@ -5,9 +5,19 @@ Lightweight .NET client for Slack messaging workflows. This library is designed 
 > [!NOTE]
 > Portions of this project were developed with LLMs such as Codex 5.2, GLM 4.7, and Qwen3.
 
-Slack Web API docs: `https://api.slack.com/methods`
+Slack Web API docs: [https://api.slack.com/methods](https://api.slack.com/methods)
 
-Slack AI docs: `https://docs.slack.dev/ai/`
+Slack AI docs: [https://docs.slack.dev/ai/](https://docs.slack.dev/ai/)
+
+## Installation
+```bash
+dotnet add package SlackAgentSharp
+```
+
+For the latest prerelease:
+```bash
+dotnet add package SlackAgentSharp --prerelease
+```
 
 ## Agent-Focused Features
 This library focuses on the Slack AI interaction patterns showcased by Slack:
