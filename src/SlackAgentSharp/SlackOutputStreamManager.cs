@@ -5,18 +5,18 @@ namespace SlackAgentSharp;
 public sealed class SlackOutputStreamManager
 {
     private const string ToolCallPrefix = "<tool_call";
-    private readonly SlackClient slackClient;
-    private readonly string channelId;
-    private readonly string threadTimestamp;
-    private readonly string recipientUserId;
+    private readonly SlackClient _slackClient;
+    private readonly string _channelId;
+    private readonly string _threadTimestamp;
+    private readonly string _recipientUserId;
     // Guards lazy stream-session creation so concurrent chunks don't start multiple Slack streams.
-    private readonly SemaphoreSlim startSemaphore = new(1, 1);
-    private SlackStreamSession? currentSession;
-    private int hadOutput;
-    private bool suppressBlock;
-    private bool decisionMade;
-    private bool startNotified;
-    private StringBuilder? pendingBuffer;
+    private readonly SemaphoreSlim _startSemaphore = new(1, 1);
+    private SlackStreamSession? _currentSession;
+    private int _hadOutput;
+    private bool _suppressBlock;
+    private bool _decisionMade;
+    private bool _startNotified;
+    private StringBuilder? _pendingBuffer;
 
     /// <summary>
     /// Creates a streaming output manager for a Slack thread.
@@ -31,13 +31,13 @@ public sealed class SlackOutputStreamManager
         string threadTimestamp,
         string recipientUserId)
     {
-        this.slackClient = slackClient ?? throw new ArgumentNullException(nameof(slackClient));
-        this.channelId = channelId ?? throw new ArgumentNullException(nameof(channelId));
-        this.threadTimestamp = threadTimestamp ?? throw new ArgumentNullException(nameof(threadTimestamp));
-        this.recipientUserId = recipientUserId ?? string.Empty;
+        _slackClient = slackClient ?? throw new ArgumentNullException(nameof(slackClient));
+        _channelId = channelId ?? throw new ArgumentNullException(nameof(channelId));
+        _threadTimestamp = threadTimestamp ?? throw new ArgumentNullException(nameof(threadTimestamp));
+        _recipientUserId = recipientUserId ?? string.Empty;
     }
 
-    public bool HadOutput => Volatile.Read(ref hadOutput) == 1;
+    public bool HadOutput => Volatile.Read(ref _hadOutput) == 1;
 
     /// <summary>
     /// Starts a new output block and resets streaming state.
@@ -45,16 +45,16 @@ public sealed class SlackOutputStreamManager
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public async Task OnOutputBlockStarted(CancellationToken cancellationToken)
     {
-        if (currentSession is not null)
+        if (_currentSession is not null)
         {
-            await currentSession.StopAsync(null, cancellationToken);
-            currentSession = null;
+            await _currentSession.StopAsync(null, cancellationToken);
+            _currentSession = null;
         }
 
-        suppressBlock = false;
-        decisionMade = false;
-        startNotified = false;
-        pendingBuffer = new StringBuilder();
+        _suppressBlock = false;
+        _decisionMade = false;
+        _startNotified = false;
+        _pendingBuffer = new StringBuilder();
     }
 
     /// <summary>
@@ -83,63 +83,63 @@ public sealed class SlackOutputStreamManager
             return;
         }
 
-        if (suppressBlock)
+        if (_suppressBlock)
         {
             return;
         }
 
-        if (!decisionMade)
+        if (!_decisionMade)
         {
-            pendingBuffer ??= new StringBuilder();
-            pendingBuffer.Append(chunk);
+            _pendingBuffer ??= new StringBuilder();
+            _pendingBuffer.Append(chunk);
             // We defer until we have enough characters to know whether this block is tool metadata.
-            var trimmed = pendingBuffer.ToString().TrimStart();
+            var trimmed = _pendingBuffer.ToString().TrimStart();
             if (trimmed.Length < ToolCallPrefix.Length)
             {
                 return;
             }
 
-            decisionMade = true;
+            _decisionMade = true;
             if (trimmed.StartsWith(ToolCallPrefix, StringComparison.Ordinal))
             {
                 // Tool-call envelopes are internal protocol data and should not be mirrored to Slack.
-                suppressBlock = true;
-                pendingBuffer.Clear();
+                _suppressBlock = true;
+                _pendingBuffer.Clear();
                 return;
             }
 
-            if (!startNotified && outputStarted is not null)
+            if (!_startNotified && outputStarted is not null)
             {
-                startNotified = true;
+                _startNotified = true;
                 await outputStarted(cancellationToken);
             }
 
-            currentSession = await EnsureSessionAsync(cancellationToken);
-            if (currentSession is not null)
+            _currentSession = await EnsureSessionAsync(cancellationToken);
+            if (_currentSession is not null)
             {
-                Interlocked.Exchange(ref hadOutput, 1);
-                await currentSession.AppendAsync(pendingBuffer.ToString(), cancellationToken);
+                Interlocked.Exchange(ref _hadOutput, 1);
+                await _currentSession.AppendAsync(_pendingBuffer.ToString(), cancellationToken);
             }
 
-            pendingBuffer.Clear();
+            _pendingBuffer.Clear();
             return;
         }
 
-        if (currentSession is null)
+        if (_currentSession is null)
         {
-            currentSession = await EnsureSessionAsync(cancellationToken);
+            _currentSession = await EnsureSessionAsync(cancellationToken);
         }
 
-        if (currentSession is not null)
+        if (_currentSession is not null)
         {
-            if (!startNotified && outputStarted is not null)
+            if (!_startNotified && outputStarted is not null)
             {
-                startNotified = true;
+                _startNotified = true;
                 await outputStarted(cancellationToken);
             }
 
-            Interlocked.Exchange(ref hadOutput, 1);
-            await currentSession.AppendAsync(chunk, cancellationToken);
+            Interlocked.Exchange(ref _hadOutput, 1);
+            await _currentSession.AppendAsync(chunk, cancellationToken);
         }
     }
 
@@ -149,20 +149,20 @@ public sealed class SlackOutputStreamManager
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public async Task OnOutputBlockEnded(CancellationToken cancellationToken)
     {
-        if (currentSession is null)
+        if (_currentSession is null)
         {
-            suppressBlock = false;
-            decisionMade = false;
-            pendingBuffer?.Clear();
+            _suppressBlock = false;
+            _decisionMade = false;
+            _pendingBuffer?.Clear();
             return;
         }
 
-        await currentSession.StopAsync(null, cancellationToken);
-        currentSession = null;
-        suppressBlock = false;
-        decisionMade = false;
-        startNotified = false;
-        pendingBuffer?.Clear();
+        await _currentSession.StopAsync(null, cancellationToken);
+        _currentSession = null;
+        _suppressBlock = false;
+        _decisionMade = false;
+        _startNotified = false;
+        _pendingBuffer?.Clear();
     }
 
     /// <summary>
@@ -176,26 +176,27 @@ public sealed class SlackOutputStreamManager
 
     private async Task<SlackStreamSession?> EnsureSessionAsync(CancellationToken cancellationToken)
     {
-        await startSemaphore.WaitAsync(cancellationToken);
+        await _startSemaphore.WaitAsync(cancellationToken);
         try
         {
-            if (currentSession is not null)
+            if (_currentSession is not null)
             {
-                return currentSession;
+                return _currentSession;
             }
 
-            currentSession = await SlackStreamSession.StartAsync(
-                slackClient,
-                channelId,
-                threadTimestamp,
-                recipientUserId,
+            _currentSession = await SlackStreamSession.StartAsync(
+                _slackClient,
+                _channelId,
+                _threadTimestamp,
+                _recipientUserId,
                 cancellationToken);
-            return currentSession;
+            return _currentSession;
         }
         finally
         {
-            startSemaphore.Release();
+            _startSemaphore.Release();
         }
     }
 }
+
 

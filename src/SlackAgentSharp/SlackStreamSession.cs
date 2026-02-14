@@ -7,30 +7,30 @@ internal sealed class SlackStreamSession
 {
     private const int BufferThreshold = 256;
     private const int ChannelCapacity = 8;
-    private readonly SlackClient slackClient;
-    private readonly string channelId;
-    private readonly string streamTimestamp;
-    private readonly StringBuilder pendingBuffer = new();
-    private readonly Channel<string> channel;
-    private readonly Task consumerTask;
-    private readonly CancellationTokenSource consumerCancellation = new();
-    private readonly object bufferLock = new();
-    private Exception? consumerException;
-    private volatile bool consumerFailed;
+    private readonly SlackClient _slackClient;
+    private readonly string _channelId;
+    private readonly string _streamTimestamp;
+    private readonly StringBuilder _pendingBuffer = new();
+    private readonly Channel<string> _channel;
+    private readonly Task _consumerTask;
+    private readonly CancellationTokenSource _consumerCancellation = new();
+    private readonly object _bufferLock = new();
+    private Exception? _consumerException;
+    private volatile bool _consumerFailed;
 
     private SlackStreamSession(SlackClient slackClient, string channelId, string streamTimestamp)
     {
-        this.slackClient = slackClient;
-        this.channelId = channelId;
-        this.streamTimestamp = streamTimestamp;
-        channel = Channel.CreateBounded<string>(new BoundedChannelOptions(ChannelCapacity)
+        _slackClient = slackClient;
+        _channelId = channelId;
+        _streamTimestamp = streamTimestamp;
+        _channel = Channel.CreateBounded<string>(new BoundedChannelOptions(ChannelCapacity)
         {
             SingleReader = true,
             SingleWriter = true,
             // Backpressure producer writes instead of unbounded buffering.
             FullMode = BoundedChannelFullMode.Wait
         });
-        consumerTask = Task.Run(() => ConsumeAsync(consumerCancellation.Token));
+        _consumerTask = Task.Run(() => ConsumeAsync(_consumerCancellation.Token));
     }
 
     public static async Task<SlackStreamSession?> StartAsync(
@@ -59,23 +59,23 @@ internal sealed class SlackStreamSession
 
     public Task AppendAsync(string text, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(text) || consumerFailed)
+        if (string.IsNullOrEmpty(text) || _consumerFailed)
         {
             return Task.CompletedTask;
         }
 
-        lock (bufferLock)
+        lock (_bufferLock)
         {
-            pendingBuffer.Append(text);
-            if (pendingBuffer.Length < BufferThreshold)
+            _pendingBuffer.Append(text);
+            if (_pendingBuffer.Length < BufferThreshold)
             {
                 return Task.CompletedTask;
             }
 
-            var payload = pendingBuffer.ToString();
-            if (channel.Writer.TryWrite(payload))
+            var payload = _pendingBuffer.ToString();
+            if (_channel.Writer.TryWrite(payload))
             {
-                pendingBuffer.Clear();
+                _pendingBuffer.Clear();
             }
         }
 
@@ -85,57 +85,57 @@ internal sealed class SlackStreamSession
     public async Task StopAsync(string? finalMarkdownText, CancellationToken cancellationToken)
     {
         string? finalPayload = null;
-        lock (bufferLock)
+        lock (_bufferLock)
         {
             if (!string.IsNullOrWhiteSpace(finalMarkdownText))
             {
-                pendingBuffer.Append(finalMarkdownText);
+                _pendingBuffer.Append(finalMarkdownText);
             }
 
-            if (pendingBuffer.Length > 0)
+            if (_pendingBuffer.Length > 0)
             {
-                finalPayload = pendingBuffer.ToString();
-                pendingBuffer.Clear();
+                finalPayload = _pendingBuffer.ToString();
+                _pendingBuffer.Clear();
             }
         }
 
-        if (!consumerFailed && !string.IsNullOrEmpty(finalPayload))
+        if (!_consumerFailed && !string.IsNullOrEmpty(finalPayload))
         {
-            await channel.Writer.WriteAsync(finalPayload, cancellationToken);
+            await _channel.Writer.WriteAsync(finalPayload, cancellationToken);
         }
 
-        channel.Writer.TryComplete();
-        // If caller cancels shutdown, also cancel the consumer so await consumerTask can unwind.
-        using var cancellationRegistration = cancellationToken.Register(() => consumerCancellation.Cancel());
+        _channel.Writer.TryComplete();
+        // If caller cancels shutdown, also cancel the consumer so await _consumerTask can unwind.
+        using var cancellationRegistration = cancellationToken.Register(() => _consumerCancellation.Cancel());
         try
         {
-            await consumerTask;
+            await _consumerTask;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
 
-        if (consumerException is not null)
+        if (_consumerException is not null)
         {
-            Console.WriteLine($"Slack stream consumer failed: {consumerException.Message}");
+            Console.WriteLine($"Slack stream consumer failed: {_consumerException.Message}");
         }
 
-        await slackClient.StopMessageStreamAsync(channelId, streamTimestamp, markdownText: null, cancellationToken);
-        consumerCancellation.Dispose();
+        await _slackClient.StopMessageStreamAsync(_channelId, _streamTimestamp, markdownText: null, cancellationToken);
+        _consumerCancellation.Dispose();
     }
 
     private async Task ConsumeAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await foreach (var payload in channel.Reader.ReadAllAsync(cancellationToken))
+            await foreach (var payload in _channel.Reader.ReadAllAsync(cancellationToken))
             {
                 if (string.IsNullOrEmpty(payload))
                 {
                     continue;
                 }
 
-                await slackClient.AppendMessageStreamAsync(channelId, streamTimestamp, payload, cancellationToken);
+                await _slackClient.AppendMessageStreamAsync(_channelId, _streamTimestamp, payload, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -143,9 +143,10 @@ internal sealed class SlackStreamSession
         }
         catch (Exception exception)
         {
-            consumerException = exception;
-            consumerFailed = true;
+            _consumerException = exception;
+            _consumerFailed = true;
         }
     }
 }
+
 

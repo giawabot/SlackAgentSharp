@@ -2,10 +2,10 @@ namespace SlackAgentSharp;
 
 public sealed class SlackPlan
 {
-    private readonly SlackClient slackClient;
-    private readonly string channelId;
-    private readonly string threadTimestamp;
-    private string? messageTimestamp;
+    private readonly SlackClient _slackClient;
+    private readonly string _channelId;
+    private readonly string _threadTimestamp;
+    private string? _messageTimestamp;
 
     /// <summary>
     /// Creates a Slack plan publisher for a channel thread.
@@ -15,9 +15,9 @@ public sealed class SlackPlan
     /// <param name="threadTimestamp">Parent thread timestamp.</param>
     public SlackPlan(SlackClient slackClient, string channelId, string threadTimestamp)
     {
-        this.slackClient = slackClient ?? throw new ArgumentNullException(nameof(slackClient));
-        this.channelId = channelId ?? throw new ArgumentNullException(nameof(channelId));
-        this.threadTimestamp = threadTimestamp ?? throw new ArgumentNullException(nameof(threadTimestamp));
+        _slackClient = slackClient ?? throw new ArgumentNullException(nameof(slackClient));
+        _channelId = channelId ?? throw new ArgumentNullException(nameof(channelId));
+        _threadTimestamp = threadTimestamp ?? throw new ArgumentNullException(nameof(threadTimestamp));
     }
 
     /// <summary>
@@ -27,7 +27,7 @@ public sealed class SlackPlan
     /// <param name="token">Token used to cancel the operation.</param>
     public Task SendInitialAsync(SlackTaskPlan plan, CancellationToken token)
     {
-        if (!string.IsNullOrWhiteSpace(messageTimestamp))
+        if (!string.IsNullOrWhiteSpace(_messageTimestamp))
         {
             return Task.CompletedTask;
         }
@@ -42,7 +42,7 @@ public sealed class SlackPlan
     /// <param name="token">Token used to cancel the operation.</param>
     public Task SendTaskUpdatesAsync(SlackTaskPlan plan, CancellationToken token)
     {
-        if (string.IsNullOrWhiteSpace(messageTimestamp))
+        if (string.IsNullOrWhiteSpace(_messageTimestamp))
         {
             return SendAsync(plan, token, isUpdate: false);
         }
@@ -53,17 +53,17 @@ public sealed class SlackPlan
     private async Task SendAsync(SlackTaskPlan plan, CancellationToken token, bool isUpdate)
     {
         var blocks = BuildBlocks(plan);
-        if (isUpdate && !string.IsNullOrWhiteSpace(messageTimestamp))
+        if (isUpdate && !string.IsNullOrWhiteSpace(_messageTimestamp))
         {
-            await slackClient.UpdateMessageBlocksAsync(channelId, messageTimestamp!, null, blocks, token);
+            await _slackClient.UpdateMessageBlocksAsync(_channelId, _messageTimestamp!, null, blocks, token);
             return;
         }
 
-        messageTimestamp = await slackClient.SendMessageWithBlocksAsync(
-            channelId,
+        _messageTimestamp = await _slackClient.SendMessageWithBlocksAsync(
+            _channelId,
             null,
             blocks,
-            threadTimestamp,
+            _threadTimestamp,
             token);
     }
 
@@ -96,4 +96,5 @@ public sealed class SlackPlan
         ];
     }
 }
+
 

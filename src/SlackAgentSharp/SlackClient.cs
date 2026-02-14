@@ -9,13 +9,13 @@ namespace SlackAgentSharp;
 public sealed class SlackClient : IDisposable
 {
     private const string SlackApiBaseUrl = "https://slack.com/api/";
-    private readonly HttpClient httpClient;
-    private readonly JsonSerializerOptions serializerOptions;
-    private readonly TimeSpan requestTimeout;
-    private readonly int transientRetryCount;
-    private readonly TimeSpan retryDelay;
-    private readonly int maxResponseBodyBytes;
-    private bool disposed;
+    private readonly HttpClient _httpClient;
+    private readonly JsonSerializerOptions _serializerOptions;
+    private readonly TimeSpan _requestTimeout;
+    private readonly int _transientRetryCount;
+    private readonly TimeSpan _retryDelay;
+    private readonly int _maxResponseBodyBytes;
+    private bool _disposed;
 
     /// <summary>
     /// Creates a Slack API client using the provided options.
@@ -53,21 +53,21 @@ public sealed class SlackClient : IDisposable
             throw new ArgumentOutOfRangeException(nameof(options), "Max response body bytes must be greater than zero.");
         }
 
-        requestTimeout = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
-        transientRetryCount = options.TransientRetryCount;
-        retryDelay = TimeSpan.FromMilliseconds(options.RetryDelayMilliseconds);
-        maxResponseBodyBytes = options.MaxResponseBodyBytes;
+        _requestTimeout = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
+        _transientRetryCount = options.TransientRetryCount;
+        _retryDelay = TimeSpan.FromMilliseconds(options.RetryDelayMilliseconds);
+        _maxResponseBodyBytes = options.MaxResponseBodyBytes;
 
-        httpClient = new HttpClient
+        _httpClient = new HttpClient
         {
             BaseAddress = new Uri(SlackApiBaseUrl, UriKind.Absolute),
             // Per-request CTS timeouts are enforced in SendWithRetryAsync for retry-aware timing.
             Timeout = Timeout.InfiniteTimeSpan
         };
-        httpClient.DefaultRequestHeaders.Authorization =
+        _httpClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", options.BotToken);
 
-        serializerOptions = new JsonSerializerOptions
+        _serializerOptions = new JsonSerializerOptions
         {
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             PropertyNameCaseInsensitive = true,
@@ -102,7 +102,7 @@ public sealed class SlackClient : IDisposable
             return false;
         }
 
-        var payload = JsonSerializer.Serialize(new SlackMessageRequest(channelId, message), serializerOptions);
+        var payload = JsonSerializer.Serialize(new SlackMessageRequest(channelId, message), _serializerOptions);
         var response = await SendMessageInternalAsync(payload, cancellationToken);
         return response.Ok;
     }
@@ -117,7 +117,7 @@ public sealed class SlackClient : IDisposable
         string userId,
         CancellationToken cancellationToken)
     {
-        var payload = JsonSerializer.Serialize(new SlackConversationOpenRequest(userId), serializerOptions);
+        var payload = JsonSerializer.Serialize(new SlackConversationOpenRequest(userId), _serializerOptions);
         using var response = await SendPostAsync("conversations.open", payload, cancellationToken);
         var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
         if (responseBody is null)
@@ -130,7 +130,7 @@ public sealed class SlackClient : IDisposable
             return null;
         }
 
-        var openResponse = JsonSerializer.Deserialize<SlackConversationOpenResponse>(responseBody, serializerOptions);
+        var openResponse = JsonSerializer.Deserialize<SlackConversationOpenResponse>(responseBody, _serializerOptions);
         if (openResponse is null || !openResponse.Ok)
         {
             return null;
@@ -176,7 +176,7 @@ public sealed class SlackClient : IDisposable
             return [];
         }
 
-        var historyResponse = JsonSerializer.Deserialize<SlackConversationHistoryResponse>(responseBody, serializerOptions);
+        var historyResponse = JsonSerializer.Deserialize<SlackConversationHistoryResponse>(responseBody, _serializerOptions);
         if (historyResponse is null || !historyResponse.Ok)
         {
             return [];
@@ -231,7 +231,7 @@ public sealed class SlackClient : IDisposable
             return [];
         }
 
-        var repliesResponse = JsonSerializer.Deserialize<SlackConversationHistoryResponse>(responseBody, serializerOptions);
+        var repliesResponse = JsonSerializer.Deserialize<SlackConversationHistoryResponse>(responseBody, _serializerOptions);
         if (repliesResponse is null || !repliesResponse.Ok)
         {
             return [];
@@ -262,7 +262,7 @@ public sealed class SlackClient : IDisposable
             throw new ArgumentException("Slack message is required.", nameof(message));
         }
 
-        var payload = JsonSerializer.Serialize(new SlackMessageRequest(channelId, message), serializerOptions);
+        var payload = JsonSerializer.Serialize(new SlackMessageRequest(channelId, message), _serializerOptions);
         var response = await SendMessageInternalAsync(payload, cancellationToken);
         return response.Ok;
     }
@@ -298,7 +298,7 @@ public sealed class SlackClient : IDisposable
 
         var payload = JsonSerializer.Serialize(
             new SlackThreadMessageRequest(channelId, message, threadTimestamp),
-            serializerOptions);
+            _serializerOptions);
         var response = await SendMessageInternalAsync(payload, cancellationToken);
         return response.Ok;
     }
@@ -329,7 +329,7 @@ public sealed class SlackClient : IDisposable
 
         var payload = JsonSerializer.Serialize(
             new SlackAssistantThreadStatusRequest(channelId, threadTimestamp, status),
-            serializerOptions);
+            _serializerOptions);
         var response = await SendAssistantInternalAsync("assistant.threads.setStatus", payload, cancellationToken);
         return response.Ok;
     }
@@ -364,7 +364,7 @@ public sealed class SlackClient : IDisposable
 
         var payload = JsonSerializer.Serialize(
             new SlackStreamStartRequest(channelId, threadTimestamp, markdownText, recipientTeamId, recipientUserId),
-            serializerOptions);
+            _serializerOptions);
         var response = await SendStreamInternalAsync("chat.startStream", payload, cancellationToken);
         return response.Ok ? response.Timestamp : null;
     }
@@ -400,7 +400,7 @@ public sealed class SlackClient : IDisposable
 
         var payload = JsonSerializer.Serialize(
             new SlackStreamAppendRequest(channelId, streamTimestamp, markdownText),
-            serializerOptions);
+            _serializerOptions);
         var response = await SendStreamInternalAsync("chat.appendStream", payload, cancellationToken);
         return response.Ok;
     }
@@ -431,7 +431,7 @@ public sealed class SlackClient : IDisposable
 
         var payload = JsonSerializer.Serialize(
             new SlackStreamStopRequest(channelId, streamTimestamp, markdownText),
-            serializerOptions);
+            _serializerOptions);
         var response = await SendStreamInternalAsync("chat.stopStream", payload, cancellationToken);
         return response.Ok;
     }
@@ -458,7 +458,7 @@ public sealed class SlackClient : IDisposable
             throw new ArgumentException("Slack message is required.", nameof(message));
         }
 
-        var payload = JsonSerializer.Serialize(new SlackMessageRequest(channelId, message), serializerOptions);
+        var payload = JsonSerializer.Serialize(new SlackMessageRequest(channelId, message), _serializerOptions);
         var response = await SendMessageInternalAsync(payload, cancellationToken);
         return response.Ok ? response.Timestamp : null;
     }
@@ -491,7 +491,7 @@ public sealed class SlackClient : IDisposable
 
         var payload = JsonSerializer.Serialize(
             new SlackBlockMessageRequest(channelId, message, blocks, threadTimestamp),
-            serializerOptions);
+            _serializerOptions);
         var response = await SendMessageInternalAsync(payload, cancellationToken);
         return response.Ok ? response.Timestamp : null;
     }
@@ -529,7 +529,7 @@ public sealed class SlackClient : IDisposable
 
         var payload = JsonSerializer.Serialize(
             new SlackBlockMessageUpdateRequest(channelId, messageTimestamp, message, blocks),
-            serializerOptions);
+            _serializerOptions);
         var response = await SendChatUpdateInternalAsync(payload, cancellationToken);
         return response.Ok;
     }
@@ -539,13 +539,13 @@ public sealed class SlackClient : IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (disposed)
+        if (_disposed)
         {
             return;
         }
 
-        httpClient.Dispose();
-        disposed = true;
+        _httpClient.Dispose();
+        _disposed = true;
     }
 
     private async Task<SlackApiResponse> SendMessageInternalAsync(
@@ -564,7 +564,7 @@ public sealed class SlackClient : IDisposable
             return new SlackApiResponse(false, null, "http_error");
         }
 
-        var messageResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, serializerOptions);
+        var messageResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
         if (messageResponse is null || !messageResponse.Ok)
         {
             return new SlackApiResponse(false, null, messageResponse?.Error);
@@ -590,7 +590,7 @@ public sealed class SlackClient : IDisposable
             return new SlackApiResponse(false, null, "http_error");
         }
 
-        var streamResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, serializerOptions);
+        var streamResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
         if (streamResponse is null || !streamResponse.Ok)
         {
             return new SlackApiResponse(false, null, streamResponse?.Error);
@@ -615,7 +615,7 @@ public sealed class SlackClient : IDisposable
             return new SlackApiResponse(false, null, "http_error");
         }
 
-        var updateResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, serializerOptions);
+        var updateResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
         if (updateResponse is null || !updateResponse.Ok)
         {
             return new SlackApiResponse(false, null, updateResponse?.Error);
@@ -641,7 +641,7 @@ public sealed class SlackClient : IDisposable
             return new SlackApiResponse(false, null, "http_error");
         }
 
-        var statusResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, serializerOptions);
+        var statusResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
         if (statusResponse is null || !statusResponse.Ok)
         {
             return new SlackApiResponse(false, null, statusResponse?.Error);
@@ -675,21 +675,21 @@ public sealed class SlackClient : IDisposable
         Func<HttpRequestMessage> requestFactory,
         CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt <= transientRetryCount; attempt++)
+        for (var attempt = 0; attempt <= _transientRetryCount; attempt++)
         {
             using var request = requestFactory();
             // Combine caller cancellation with per-attempt timeout to bound each retry window.
             using var timeoutToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutToken.CancelAfter(requestTimeout);
+            timeoutToken.CancelAfter(_requestTimeout);
             try
             {
-                var response = await httpClient.SendAsync(
+                var response = await _httpClient.SendAsync(
                     request,
                     // Start processing once headers arrive; body size is enforced separately below.
                     HttpCompletionOption.ResponseHeadersRead,
                     timeoutToken.Token);
 
-                if (attempt < transientRetryCount && IsTransientStatusCode(response.StatusCode))
+                if (attempt < _transientRetryCount && IsTransientStatusCode(response.StatusCode))
                 {
                     response.Dispose();
                     await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
@@ -698,11 +698,11 @@ public sealed class SlackClient : IDisposable
 
                 return response;
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < transientRetryCount)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < _transientRetryCount)
             {
                 await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
             }
-            catch (HttpRequestException) when (attempt < transientRetryCount)
+            catch (HttpRequestException) when (attempt < _transientRetryCount)
             {
                 await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
             }
@@ -724,13 +724,13 @@ public sealed class SlackClient : IDisposable
     private TimeSpan ComputeRetryDelay(int attempt)
     {
         var exponentialBackoffFactor = 1 << Math.Min(attempt, 6);
-        return TimeSpan.FromMilliseconds(retryDelay.TotalMilliseconds * exponentialBackoffFactor);
+        return TimeSpan.FromMilliseconds(_retryDelay.TotalMilliseconds * exponentialBackoffFactor);
     }
 
     private async Task<string?> TryReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
     {
         // Fast-path reject when server advertises a body larger than our safety cap.
-        if (content.Headers.ContentLength is long length && length > maxResponseBodyBytes)
+        if (content.Headers.ContentLength is long length && length > _maxResponseBodyBytes)
         {
             return null;
         }
@@ -749,7 +749,7 @@ public sealed class SlackClient : IDisposable
             }
 
             totalBytesRead += read;
-            if (totalBytesRead > maxResponseBodyBytes)
+            if (totalBytesRead > _maxResponseBodyBytes)
             {
                 // Enforce limit even when Content-Length is missing or incorrect.
                 return null;
@@ -761,4 +761,5 @@ public sealed class SlackClient : IDisposable
         return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
     }
 }
+
 
