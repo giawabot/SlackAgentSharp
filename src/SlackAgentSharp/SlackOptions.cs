@@ -17,5 +17,7 @@ public sealed class SlackOptions
     public int RetryDelayMilliseconds { get; set; } = 250;
 
     public int MaxResponseBodyBytes { get; set; } = 1024 * 1024;
+
+    public IOutputChunkFilter OutputChunkFilter { get; set; } = AllowAllOutputChunkFilter.Instance;
 }
 

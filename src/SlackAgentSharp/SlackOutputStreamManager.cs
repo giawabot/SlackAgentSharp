@@ -4,8 +4,8 @@ namespace SlackAgentSharp;
 
 public sealed class SlackOutputStreamManager
 {
-    private const string ToolCallPrefix = "<tool_call";
     private readonly SlackClient _slackClient;
+    private readonly IOutputChunkFilter _outputChunkFilter;
     private readonly string _channelId;
     private readonly string _threadTimestamp;
     private readonly string _recipientUserId;
@@ -22,16 +22,42 @@ public sealed class SlackOutputStreamManager
     /// Creates a streaming output manager for a Slack thread.
     /// </summary>
     /// <param name="slackClient">Slack client used for stream operations.</param>
+    /// <param name="options">Slack options containing the configured output filter.</param>
     /// <param name="channelId">Slack channel ID.</param>
     /// <param name="threadTimestamp">Slack thread timestamp.</param>
     /// <param name="recipientUserId">Optional recipient user ID.</param>
     public SlackOutputStreamManager(
         SlackClient slackClient,
+        SlackOptions options,
+        string channelId,
+        string threadTimestamp,
+        string recipientUserId)
+        : this(
+            slackClient,
+            (options ?? throw new ArgumentNullException(nameof(options))).OutputChunkFilter,
+            channelId,
+            threadTimestamp,
+            recipientUserId)
+    {
+    }
+
+    /// <summary>
+    /// Creates a streaming output manager for a Slack thread.
+    /// </summary>
+    /// <param name="slackClient">Slack client used for stream operations.</param>
+    /// <param name="outputChunkFilter">Filter used to suppress non-user-facing output.</param>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Slack thread timestamp.</param>
+    /// <param name="recipientUserId">Optional recipient user ID.</param>
+    public SlackOutputStreamManager(
+        SlackClient slackClient,
+        IOutputChunkFilter outputChunkFilter,
         string channelId,
         string threadTimestamp,
         string recipientUserId)
     {
         _slackClient = slackClient ?? throw new ArgumentNullException(nameof(slackClient));
+        _outputChunkFilter = outputChunkFilter ?? throw new ArgumentNullException(nameof(outputChunkFilter));
         _channelId = channelId ?? throw new ArgumentNullException(nameof(channelId));
         _threadTimestamp = threadTimestamp ?? throw new ArgumentNullException(nameof(threadTimestamp));
         _recipientUserId = recipientUserId ?? string.Empty;
@@ -92,17 +118,16 @@ public sealed class SlackOutputStreamManager
         {
             _pendingBuffer ??= new StringBuilder();
             _pendingBuffer.Append(chunk);
-            // We defer until we have enough characters to know whether this block is tool metadata.
-            var trimmed = _pendingBuffer.ToString().TrimStart();
-            if (trimmed.Length < ToolCallPrefix.Length)
+
+            var decision = _outputChunkFilter.EvaluateBufferedOutput(_pendingBuffer.ToString());
+            if (decision == OutputChunkFilterDecision.Undecided)
             {
                 return;
             }
 
             _decisionMade = true;
-            if (trimmed.StartsWith(ToolCallPrefix, StringComparison.Ordinal))
+            if (decision == OutputChunkFilterDecision.Suppress)
             {
-                // Tool-call envelopes are internal protocol data and should not be mirrored to Slack.
                 _suppressBlock = true;
                 _pendingBuffer.Clear();
                 return;
