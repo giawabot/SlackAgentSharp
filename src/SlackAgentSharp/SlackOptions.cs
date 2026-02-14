@@ -9,5 +9,11 @@ public sealed class SlackOptions
     public int PollingDelay { get; set; } = 5;
 
     public bool IncludeReasoning { get; set; }
+
+    public int RequestTimeoutSeconds { get; set; } = 30;
+
+    public int TransientRetryCount { get; set; } = 2;
+
+    public int RetryDelayMilliseconds { get; set; } = 250;
 }
 

@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -10,6 +11,9 @@ public sealed class SlackClient : IDisposable
     private const string SlackApiBaseUrl = "https://slack.com/api/";
     private readonly HttpClient httpClient;
     private readonly JsonSerializerOptions serializerOptions;
+    private readonly TimeSpan requestTimeout;
+    private readonly int transientRetryCount;
+    private readonly TimeSpan retryDelay;
     private bool disposed;
 
     public SlackClient(SlackOptions options)
@@ -24,9 +28,29 @@ public sealed class SlackClient : IDisposable
             throw new ArgumentException("Slack bot token is required.", nameof(options));
         }
 
+        if (options.RequestTimeoutSeconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Request timeout must be greater than zero.");
+        }
+
+        if (options.TransientRetryCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Transient retry count cannot be negative.");
+        }
+
+        if (options.RetryDelayMilliseconds < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Retry delay cannot be negative.");
+        }
+
+        requestTimeout = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
+        transientRetryCount = options.TransientRetryCount;
+        retryDelay = TimeSpan.FromMilliseconds(options.RetryDelayMilliseconds);
+
         httpClient = new HttpClient
         {
-            BaseAddress = new Uri(SlackApiBaseUrl, UriKind.Absolute)
+            BaseAddress = new Uri(SlackApiBaseUrl, UriKind.Absolute),
+            Timeout = Timeout.InfiniteTimeSpan
         };
         httpClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Bearer", options.BotToken);
@@ -69,8 +93,7 @@ public sealed class SlackClient : IDisposable
         CancellationToken cancellationToken)
     {
         var payload = JsonSerializer.Serialize(new SlackConversationOpenRequest(userId), serializerOptions);
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var response = await httpClient.PostAsync("conversations.open", content, cancellationToken);
+        using var response = await SendPostAsync("conversations.open", payload, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -104,7 +127,7 @@ public sealed class SlackClient : IDisposable
             requestUri.Append(Uri.EscapeDataString(oldestTimestamp));
         }
 
-        using var response = await httpClient.GetAsync(requestUri.ToString(), cancellationToken);
+        using var response = await SendGetAsync(requestUri.ToString(), cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -146,7 +169,7 @@ public sealed class SlackClient : IDisposable
             requestUri.Append(Uri.EscapeDataString(oldestTimestamp));
         }
 
-        using var response = await httpClient.GetAsync(requestUri.ToString(), cancellationToken);
+        using var response = await SendGetAsync(requestUri.ToString(), cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -397,8 +420,7 @@ public sealed class SlackClient : IDisposable
         string payload,
         CancellationToken cancellationToken)
     {
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var response = await httpClient.PostAsync("chat.postMessage", content, cancellationToken);
+        using var response = await SendPostAsync("chat.postMessage", payload, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -419,8 +441,7 @@ public sealed class SlackClient : IDisposable
         string payload,
         CancellationToken cancellationToken)
     {
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var response = await httpClient.PostAsync(endpoint, content, cancellationToken);
+        using var response = await SendPostAsync(endpoint, payload, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -440,8 +461,7 @@ public sealed class SlackClient : IDisposable
         string payload,
         CancellationToken cancellationToken)
     {
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var response = await httpClient.PostAsync("chat.update", content, cancellationToken);
+        using var response = await SendPostAsync("chat.update", payload, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -462,8 +482,7 @@ public sealed class SlackClient : IDisposable
         string payload,
         CancellationToken cancellationToken)
     {
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var response = await httpClient.PostAsync(endpoint, content, cancellationToken);
+        using var response = await SendPostAsync(endpoint, payload, cancellationToken);
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -477,6 +496,81 @@ public sealed class SlackClient : IDisposable
         }
 
         return statusResponse;
+    }
+
+    private Task<HttpResponseMessage> SendGetAsync(string requestUri, CancellationToken cancellationToken)
+    {
+        return SendWithRetryAsync(
+            () => new HttpRequestMessage(HttpMethod.Get, requestUri),
+            cancellationToken);
+    }
+
+    private Task<HttpResponseMessage> SendPostAsync(string endpoint, string payload, CancellationToken cancellationToken)
+    {
+        return SendWithRetryAsync(
+            () =>
+            {
+                var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+                {
+                    Content = new StringContent(payload, Encoding.UTF8, "application/json")
+                };
+                return request;
+            },
+            cancellationToken);
+    }
+
+    private async Task<HttpResponseMessage> SendWithRetryAsync(
+        Func<HttpRequestMessage> requestFactory,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt <= transientRetryCount; attempt++)
+        {
+            using var request = requestFactory();
+            using var timeoutToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutToken.CancelAfter(requestTimeout);
+            try
+            {
+                var response = await httpClient.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    timeoutToken.Token);
+
+                if (attempt < transientRetryCount && IsTransientStatusCode(response.StatusCode))
+                {
+                    response.Dispose();
+                    await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
+                    continue;
+                }
+
+                return response;
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < transientRetryCount)
+            {
+                await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
+            }
+            catch (HttpRequestException) when (attempt < transientRetryCount)
+            {
+                await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
+            }
+        }
+
+        throw new InvalidOperationException("Retry loop exited unexpectedly.");
+    }
+
+    private static bool IsTransientStatusCode(HttpStatusCode statusCode)
+    {
+        return statusCode == HttpStatusCode.RequestTimeout
+            || statusCode == HttpStatusCode.TooManyRequests
+            || statusCode == HttpStatusCode.BadGateway
+            || statusCode == HttpStatusCode.ServiceUnavailable
+            || statusCode == HttpStatusCode.GatewayTimeout
+            || (int)statusCode >= 500;
+    }
+
+    private TimeSpan ComputeRetryDelay(int attempt)
+    {
+        var exponentialBackoffFactor = 1 << Math.Min(attempt, 6);
+        return TimeSpan.FromMilliseconds(retryDelay.TotalMilliseconds * exponentialBackoffFactor);
     }
 }
 

@@ -13,6 +13,7 @@ internal sealed class SlackStreamSession
     private readonly StringBuilder pendingBuffer = new();
     private readonly Channel<string> channel;
     private readonly Task consumerTask;
+    private readonly CancellationTokenSource consumerCancellation = new();
     private readonly object bufferLock = new();
     private Exception? consumerException;
     private volatile bool consumerFailed;
@@ -28,7 +29,7 @@ internal sealed class SlackStreamSession
             SingleWriter = true,
             FullMode = BoundedChannelFullMode.Wait
         });
-        consumerTask = Task.Run(ConsumeAsync);
+        consumerTask = Task.Run(() => ConsumeAsync(consumerCancellation.Token));
     }
 
     public static async Task<SlackStreamSession?> StartAsync(
@@ -103,6 +104,7 @@ internal sealed class SlackStreamSession
         }
 
         channel.Writer.TryComplete();
+        using var cancellationRegistration = cancellationToken.Register(() => consumerCancellation.Cancel());
         try
         {
             await consumerTask;
@@ -117,21 +119,25 @@ internal sealed class SlackStreamSession
         }
 
         await slackClient.StopMessageStreamAsync(channelId, streamTimestamp, markdownText: null, cancellationToken);
+        consumerCancellation.Dispose();
     }
 
-    private async Task ConsumeAsync()
+    private async Task ConsumeAsync(CancellationToken cancellationToken)
     {
         try
         {
-            await foreach (var payload in channel.Reader.ReadAllAsync())
+            await foreach (var payload in channel.Reader.ReadAllAsync(cancellationToken))
             {
                 if (string.IsNullOrEmpty(payload))
                 {
                     continue;
                 }
 
-                await slackClient.AppendMessageStreamAsync(channelId, streamTimestamp, payload, CancellationToken.None);
+                await slackClient.AppendMessageStreamAsync(channelId, streamTimestamp, payload, cancellationToken);
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
         }
         catch (Exception exception)
         {
