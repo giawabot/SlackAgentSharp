@@ -335,6 +335,85 @@ public sealed class SlackClient : IDisposable
     }
 
     /// <summary>
+    /// Sets title metadata for an assistant thread in Slack.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Thread timestamp.</param>
+    /// <param name="title">Title string understood by Slack.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the update; otherwise <c>false</c>.</returns>
+    public async Task<bool> SetAssistantThreadTitleAsync(
+        string channelId,
+        string threadTimestamp,
+        string title,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(channelId))
+        {
+            throw new ArgumentException("Slack channel ID is required.", nameof(channelId));
+        }
+
+        if (string.IsNullOrWhiteSpace(threadTimestamp))
+        {
+            throw new ArgumentException("Slack thread timestamp is required.", nameof(threadTimestamp));
+        }
+
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            throw new ArgumentException("Slack thread title is required.", nameof(title));
+        }
+
+        var payload = JsonSerializer.Serialize(
+            new SlackAssistantThreadTitleRequest(channelId, threadTimestamp, title),
+            _serializerOptions);
+        var response = await SendAssistantInternalAsync("assistant.threads.setTitle", payload, cancellationToken);
+        return response.Ok;
+    }
+
+    /// <summary>
+    /// Sets suggested prompts for an assistant thread in Slack.
+    /// </summary>
+    /// <param name="channelId">Slack channel ID.</param>
+    /// <param name="threadTimestamp">Thread timestamp.</param>
+    /// <param name="title">Title shown above prompt suggestions.</param>
+    /// <param name="prompts">Suggested prompt buttons.</param>
+    /// <param name="cancellationToken">Token used to cancel the operation.</param>
+    /// <returns><c>true</c> when Slack accepts the update; otherwise <c>false</c>.</returns>
+    public async Task<bool> SetAssistantThreadSuggestedPromptsAsync(
+        string channelId,
+        string threadTimestamp,
+        string title,
+        IReadOnlyList<SlackSuggestedPrompt> prompts,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(channelId))
+        {
+            throw new ArgumentException("Slack channel ID is required.", nameof(channelId));
+        }
+
+        if (string.IsNullOrWhiteSpace(threadTimestamp))
+        {
+            throw new ArgumentException("Slack thread timestamp is required.", nameof(threadTimestamp));
+        }
+
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            throw new ArgumentException("Suggested prompt title is required.", nameof(title));
+        }
+
+        if (prompts is null || prompts.Count == 0)
+        {
+            throw new ArgumentException("At least one suggested prompt is required.", nameof(prompts));
+        }
+
+        var payload = JsonSerializer.Serialize(
+            new SlackAssistantThreadSuggestedPromptsRequest(channelId, threadTimestamp, title, prompts),
+            _serializerOptions);
+        var response = await SendAssistantInternalAsync("assistant.threads.setSuggestedPrompts", payload, cancellationToken);
+        return response.Ok;
+    }
+
+    /// <summary>
     /// Starts a Slack streaming message session.
     /// </summary>
     /// <param name="channelId">Slack channel ID.</param>

@@ -28,6 +28,17 @@ internal sealed record SlackAssistantThreadStatusRequest(
     [property: JsonPropertyName("thread_ts")] string ThreadTimestamp,
     [property: JsonPropertyName("status")] string Status);
 
+internal sealed record SlackAssistantThreadTitleRequest(
+    [property: JsonPropertyName("channel_id")] string ChannelId,
+    [property: JsonPropertyName("thread_ts")] string ThreadTimestamp,
+    [property: JsonPropertyName("title")] string Title);
+
+internal sealed record SlackAssistantThreadSuggestedPromptsRequest(
+    [property: JsonPropertyName("channel_id")] string ChannelId,
+    [property: JsonPropertyName("thread_ts")] string ThreadTimestamp,
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("prompts")] IReadOnlyList<SlackSuggestedPrompt> Prompts);
+
 internal sealed record SlackStreamStartRequest(
     [property: JsonPropertyName("channel")] string Channel,
     [property: JsonPropertyName("thread_ts")] string ThreadTimestamp,
@@ -68,6 +79,10 @@ public sealed record SlackMessage(
     [property: JsonPropertyName("bot_id")] string? BotId,
     [property: JsonPropertyName("subtype")] string? Subtype,
     [property: JsonPropertyName("thread_ts")] string? ThreadTimestamp);
+
+public sealed record SlackSuggestedPrompt(
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("message")] string Message);
 
 internal sealed record SlackConversationHistoryResponse(
     [property: JsonPropertyName("ok")] bool Ok,

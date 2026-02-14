@@ -12,6 +12,8 @@ Slack AI docs: `https://docs.slack.dev/ai/`
 ## Agent-Focused Features
 This library focuses on the Slack AI interaction patterns showcased by Slack:
 - Loading states via `SetAssistantThreadStatusAsync`.
+- Thread titles via `SetAssistantThreadTitleAsync` (useful for LLM-generated conversation summaries).
+- Suggested prompts via `SetAssistantThreadSuggestedPromptsAsync`.
 - Threaded conversations via `SendThreadMessageAsync` and conversation reply/history APIs.
 - Text streaming via `StartMessageStreamAsync`, `AppendMessageStreamAsync`, and `StopMessageStreamAsync` (or `SlackOutputStreamManager`).
 - Plan blocks via `SlackPlan`, `SlackTaskPlan`, and related plan models.
@@ -65,6 +67,11 @@ await manager.OnOutputBlockEnded(ct);
 ## Direct Messages and Conversation Reads
 - Use `SendDirectMessageAsync(userId, message)` to open a DM channel and send in one call.
 - Use `GetConversationMessagesAsync` and `GetConversationRepliesAsync` to read channel/thread history.
+
+## Assistant Thread Metadata
+- Use `SetAssistantThreadStatusAsync` to show loading/progress states.
+- Use `SetAssistantThreadTitleAsync` to set a concise, LLM-generated thread title in conversation history.
+- Use `SetAssistantThreadSuggestedPromptsAsync` to add clickable follow-up prompt suggestions.
 
 ## Plan Message Support
 - `SlackPlan` helps publish and update structured plan blocks.
