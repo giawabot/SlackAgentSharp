@@ -14,6 +14,7 @@ public sealed class SlackClient : IDisposable
     private readonly TimeSpan requestTimeout;
     private readonly int transientRetryCount;
     private readonly TimeSpan retryDelay;
+    private readonly int maxResponseBodyBytes;
     private bool disposed;
 
     public SlackClient(SlackOptions options)
@@ -43,13 +44,20 @@ public sealed class SlackClient : IDisposable
             throw new ArgumentOutOfRangeException(nameof(options), "Retry delay cannot be negative.");
         }
 
+        if (options.MaxResponseBodyBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(options), "Max response body bytes must be greater than zero.");
+        }
+
         requestTimeout = TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
         transientRetryCount = options.TransientRetryCount;
         retryDelay = TimeSpan.FromMilliseconds(options.RetryDelayMilliseconds);
+        maxResponseBodyBytes = options.MaxResponseBodyBytes;
 
         httpClient = new HttpClient
         {
             BaseAddress = new Uri(SlackApiBaseUrl, UriKind.Absolute),
+            // Per-request CTS timeouts are enforced in SendWithRetryAsync for retry-aware timing.
             Timeout = Timeout.InfiniteTimeSpan
         };
         httpClient.DefaultRequestHeaders.Authorization =
@@ -94,7 +102,12 @@ public sealed class SlackClient : IDisposable
     {
         var payload = JsonSerializer.Serialize(new SlackConversationOpenRequest(userId), serializerOptions);
         using var response = await SendPostAsync("conversations.open", payload, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
+        if (responseBody is null)
+        {
+            return null;
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return null;
@@ -128,7 +141,12 @@ public sealed class SlackClient : IDisposable
         }
 
         using var response = await SendGetAsync(requestUri.ToString(), cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
+        if (responseBody is null)
+        {
+            return [];
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return [];
@@ -170,7 +188,12 @@ public sealed class SlackClient : IDisposable
         }
 
         using var response = await SendGetAsync(requestUri.ToString(), cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
+        if (responseBody is null)
+        {
+            return [];
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return [];
@@ -421,7 +444,12 @@ public sealed class SlackClient : IDisposable
         CancellationToken cancellationToken)
     {
         using var response = await SendPostAsync("chat.postMessage", payload, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
+        if (responseBody is null)
+        {
+            return new SlackApiResponse(false, null, "response_too_large");
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return new SlackApiResponse(false, null, "http_error");
@@ -442,7 +470,12 @@ public sealed class SlackClient : IDisposable
         CancellationToken cancellationToken)
     {
         using var response = await SendPostAsync(endpoint, payload, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
+        if (responseBody is null)
+        {
+            return new SlackApiResponse(false, null, "response_too_large");
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return new SlackApiResponse(false, null, "http_error");
@@ -462,7 +495,12 @@ public sealed class SlackClient : IDisposable
         CancellationToken cancellationToken)
     {
         using var response = await SendPostAsync("chat.update", payload, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
+        if (responseBody is null)
+        {
+            return new SlackApiResponse(false, null, "response_too_large");
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return new SlackApiResponse(false, null, "http_error");
@@ -483,7 +521,12 @@ public sealed class SlackClient : IDisposable
         CancellationToken cancellationToken)
     {
         using var response = await SendPostAsync(endpoint, payload, cancellationToken);
-        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
+        if (responseBody is null)
+        {
+            return new SlackApiResponse(false, null, "response_too_large");
+        }
+
         if (!response.IsSuccessStatusCode)
         {
             return new SlackApiResponse(false, null, "http_error");
@@ -571,6 +614,38 @@ public sealed class SlackClient : IDisposable
     {
         var exponentialBackoffFactor = 1 << Math.Min(attempt, 6);
         return TimeSpan.FromMilliseconds(retryDelay.TotalMilliseconds * exponentialBackoffFactor);
+    }
+
+    private async Task<string?> TryReadResponseBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is long length && length > maxResponseBodyBytes)
+        {
+            return null;
+        }
+
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        using var buffer = new MemoryStream();
+        var chunk = new byte[8192];
+        var totalBytesRead = 0;
+
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk, cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            totalBytesRead += read;
+            if (totalBytesRead > maxResponseBodyBytes)
+            {
+                return null;
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
     }
 }
 

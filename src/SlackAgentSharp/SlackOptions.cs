@@ -15,5 +15,7 @@ public sealed class SlackOptions
     public int TransientRetryCount { get; set; } = 2;
 
     public int RetryDelayMilliseconds { get; set; } = 250;
+
+    public int MaxResponseBodyBytes { get; set; } = 1024 * 1024;
 }
 
