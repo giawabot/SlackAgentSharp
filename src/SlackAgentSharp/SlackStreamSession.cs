@@ -60,6 +60,7 @@ internal sealed class SlackStreamSession
 
     public Task AppendAsync(string text, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         ThrowIfConsumerFailed();
 
         if (string.IsNullOrEmpty(text))
@@ -67,6 +68,7 @@ internal sealed class SlackStreamSession
             return Task.CompletedTask;
         }
 
+        string? payload = null;
         lock (_bufferLock)
         {
             _pendingBuffer.Append(text);
@@ -75,14 +77,11 @@ internal sealed class SlackStreamSession
                 return Task.CompletedTask;
             }
 
-            var payload = _pendingBuffer.ToString();
-            if (_channel.Writer.TryWrite(payload))
-            {
-                _pendingBuffer.Clear();
-            }
+            payload = _pendingBuffer.ToString();
+            _pendingBuffer.Clear();
         }
 
-        return Task.CompletedTask;
+        return WritePayloadAsync(payload, cancellationToken);
     }
 
     public async Task StopAsync(string? finalMarkdownText, CancellationToken cancellationToken)
@@ -166,5 +165,11 @@ internal sealed class SlackStreamSession
 
         var exception = _consumerException ?? new InvalidOperationException("Slack stream consumer failed.");
         ExceptionDispatchInfo.Capture(exception).Throw();
+    }
+
+    private async Task WritePayloadAsync(string payload, CancellationToken cancellationToken)
+    {
+        ThrowIfConsumerFailed();
+        await _channel.Writer.WriteAsync(payload, cancellationToken);
     }
 }
