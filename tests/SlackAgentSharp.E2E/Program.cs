@@ -27,37 +27,88 @@ var pollDelay = TimeSpan.FromSeconds(Math.Max(1, settings.PollingDelaySeconds));
 var processingDelay = TimeSpan.FromMilliseconds(Math.Max(0, settings.SimulatedProcessingDelayMilliseconds));
 var chunkDelay = TimeSpan.FromMilliseconds(Math.Max(0, settings.StreamChunkDelayMilliseconds));
 var chunkSize = Math.Max(8, settings.StreamChunkSize);
-var recipientUserId = string.IsNullOrWhiteSpace(settings.RecipientUserId) ? settings.UserId : settings.RecipientUserId;
-var lastSeenTimestamp = string.IsNullOrWhiteSpace(settings.ListenFromTimestamp)
-    ? settings.ThreadTimestamp
-    : settings.ListenFromTimestamp;
+var lastSeenTimestamp = CurrentSlackTimestamp();
 
-var planPublisher = new SlackPlan(slackClient, settings.ChannelId, settings.ThreadTimestamp);
-var streamManager = new SlackOutputStreamManager(
-    slackClient,
-    AllowAllOutputChunkFilter.Instance,
-    settings.ChannelId,
-    settings.ThreadTimestamp,
-    recipientUserId);
+var channelId = await slackClient.OpenDirectMessageChannelAsync(settings.UserId, cancellationSource.Token)
+    ?? throw new InvalidOperationException("Unable to open DM channel for configured Slack:UserId.");
 
 WriteLine("E2E harness started.");
-WriteLine($"Watching channel {settings.ChannelId} thread {settings.ThreadTimestamp} for user {settings.UserId}.");
+WriteLine($"Watching DM channel {channelId} for user {settings.UserId}.");
 
 while (!cancellationSource.IsCancellationRequested)
 {
     try
     {
-        var replies = await slackClient.GetConversationRepliesAsync(
-            settings.ChannelId,
-            settings.ThreadTimestamp,
+        var messages = await slackClient.GetConversationMessagesAsync(
+            channelId,
             lastSeenTimestamp,
             cancellationSource.Token);
 
-        var pendingMessages = replies
+        foreach (var message in messages.OrderBy(message => ParseTimestamp(message.Timestamp ?? "0")))
+        {
+            var reason = GetSkipReason(message, settings.UserId, lastSeenTimestamp);
+            var preview = string.IsNullOrWhiteSpace(message.Text)
+                ? "(empty)"
+                : message.Text!.Replace('\n', ' ').Trim();
+            if (preview.Length > 80)
+            {
+                preview = preview[..80];
+            }
+
+            WriteLine(
+                $"Seen ts={message.Timestamp ?? "(null)"} user={message.User ?? "(null)"} " +
+                $"bot={message.BotId ?? "(null)"} subtype={message.Subtype ?? "(null)"} " +
+                $"thread={message.ThreadTimestamp ?? "(null)"} reason={(reason ?? "process")} text=\"{preview}\"");
+        }
+
+        var threadedReplies = new List<SlackMessage>();
+        foreach (var threadRoot in messages.Where(IsAssistantThreadBootstrap))
+        {
+            var threadTs = string.IsNullOrWhiteSpace(threadRoot.ThreadTimestamp)
+                ? threadRoot.Timestamp
+                : threadRoot.ThreadTimestamp;
+            if (string.IsNullOrWhiteSpace(threadTs))
+            {
+                continue;
+            }
+
+            var replies = await slackClient.GetConversationRepliesAsync(
+                channelId,
+                threadTs,
+                lastSeenTimestamp,
+                cancellationSource.Token);
+
+            foreach (var reply in replies.OrderBy(reply => ParseTimestamp(reply.Timestamp ?? "0")))
+            {
+                var reason = GetSkipReason(reply, settings.UserId, lastSeenTimestamp);
+                var preview = string.IsNullOrWhiteSpace(reply.Text)
+                    ? "(empty)"
+                    : reply.Text!.Replace('\n', ' ').Trim();
+                if (preview.Length > 80)
+                {
+                    preview = preview[..80];
+                }
+
+                WriteLine(
+                    $"ThreadReply ts={reply.Timestamp ?? "(null)"} user={reply.User ?? "(null)"} " +
+                    $"bot={reply.BotId ?? "(null)"} subtype={reply.Subtype ?? "(null)"} " +
+                    $"thread={reply.ThreadTimestamp ?? "(null)"} reason={(reason ?? "process")} text=\"{preview}\"");
+            }
+
+            threadedReplies.AddRange(replies);
+        }
+
+        var pendingMessages = messages
+            .Concat(threadedReplies)
             .Where(message => IsUserMessage(message, settings.UserId))
             .Where(message => IsStrictlyAfter(message.Timestamp, lastSeenTimestamp))
             .OrderBy(message => ParseTimestamp(message.Timestamp!))
+            .DistinctBy(message => message.Timestamp)
             .ToList();
+
+        WriteLine(
+            $"Polled {messages.Count} DM messages since {lastSeenTimestamp}; " +
+            $"{pendingMessages.Count} matched processing criteria.");
 
         foreach (var message in pendingMessages)
         {
@@ -69,9 +120,9 @@ while (!cancellationSource.IsCancellationRequested)
             lastSeenTimestamp = message.Timestamp;
             await ProcessMessageAsync(
                 slackClient,
-                planPublisher,
-                streamManager,
                 settings,
+                channelId,
+                settings.UserId,
                 message,
                 processingDelay,
                 chunkDelay,
@@ -102,15 +153,36 @@ WriteLine("E2E harness stopped.");
 
 static async Task ProcessMessageAsync(
     SlackClient slackClient,
-    SlackPlan planPublisher,
-    SlackOutputStreamManager streamManager,
     SlackHarnessSettings settings,
+    string channelId,
+    string recipientUserId,
     SlackMessage message,
     TimeSpan processingDelay,
     TimeSpan chunkDelay,
     int chunkSize,
     CancellationToken cancellationToken)
 {
+    if (string.IsNullOrWhiteSpace(message.Timestamp))
+    {
+        return;
+    }
+
+    var threadTimestamp = string.IsNullOrWhiteSpace(message.ThreadTimestamp)
+        ? message.Timestamp
+        : message.ThreadTimestamp;
+    if (string.IsNullOrWhiteSpace(threadTimestamp))
+    {
+        return;
+    }
+
+    var planPublisher = new SlackPlan(slackClient, channelId, threadTimestamp);
+    var streamManager = new SlackOutputStreamManager(
+        slackClient,
+        AllowAllOutputChunkFilter.Instance,
+        channelId,
+        threadTimestamp,
+        recipientUserId);
+
     var messageText = string.IsNullOrWhiteSpace(message.Text) ? "(empty message)" : message.Text.Trim();
     WriteLine($"Processing message {message.Timestamp}: {messageText}");
 
@@ -125,8 +197,8 @@ static async Task ProcessMessageAsync(
     await planPublisher.SendInitialAsync(new SlackTaskPlan("SlackAgentSharp E2E workflow", tasks), cancellationToken);
     await EnsureTrue(
         slackClient.SetAssistantThreadStatusAsync(
-            settings.ChannelId,
-            settings.ThreadTimestamp,
+            channelId,
+            threadTimestamp,
             settings.ThinkingStatus,
             cancellationToken),
         "assistant.threads.setStatus(thinking)");
@@ -165,8 +237,8 @@ static async Task ProcessMessageAsync(
     var threadTitle = BuildThreadTitle(messageText);
     await EnsureTrue(
         slackClient.SetAssistantThreadTitleAsync(
-            settings.ChannelId,
-            settings.ThreadTimestamp,
+            channelId,
+            threadTimestamp,
             threadTitle,
             cancellationToken),
         "assistant.threads.setTitle");
@@ -180,8 +252,8 @@ static async Task ProcessMessageAsync(
 
     await EnsureTrue(
         slackClient.SetAssistantThreadSuggestedPromptsAsync(
-            settings.ChannelId,
-            settings.ThreadTimestamp,
+            channelId,
+            threadTimestamp,
             settings.SuggestedPromptsTitle,
             prompts,
             cancellationToken),
@@ -189,11 +261,11 @@ static async Task ProcessMessageAsync(
 
     await EnsureTrue(
         slackClient.SetAssistantThreadStatusAsync(
-            settings.ChannelId,
-            settings.ThreadTimestamp,
-            settings.CompletedStatus,
+            channelId,
+            threadTimestamp,
+            string.Empty,
             cancellationToken),
-        "assistant.threads.setStatus(completed)");
+        "assistant.threads.setStatus(clear)");
 
     tasks = UpdateTaskStatus(tasks, "metadata", SlackTaskStatus.Complete);
     await planPublisher.SendTaskUpdatesAsync(new SlackTaskPlan("SlackAgentSharp E2E workflow", tasks), cancellationToken);
@@ -222,12 +294,27 @@ static bool IsUserMessage(SlackMessage message, string expectedUserId)
         return false;
     }
 
-    if (!string.IsNullOrWhiteSpace(message.Subtype))
+    if (IsAssistantThreadBootstrap(message))
     {
         return false;
     }
 
+    if (string.IsNullOrWhiteSpace(message.User))
+    {
+        return false;
+    }
+
+    if (string.IsNullOrWhiteSpace(expectedUserId))
+    {
+        return true;
+    }
+
     return string.Equals(message.User, expectedUserId, StringComparison.Ordinal);
+}
+
+static bool IsAssistantThreadBootstrap(SlackMessage message)
+{
+    return string.Equals(message.Subtype, "assistant_app_thread", StringComparison.Ordinal);
 }
 
 static bool IsStrictlyAfter(string? timestamp, string boundary)
@@ -238,6 +325,37 @@ static bool IsStrictlyAfter(string? timestamp, string boundary)
     }
 
     return ParseTimestamp(timestamp) > ParseTimestamp(boundary);
+}
+
+static string? GetSkipReason(SlackMessage message, string expectedUserId, string boundaryTimestamp)
+{
+    if (string.IsNullOrWhiteSpace(message.Timestamp))
+    {
+        return "missing_timestamp";
+    }
+
+    if (!IsStrictlyAfter(message.Timestamp, boundaryTimestamp))
+    {
+        return "not_after_boundary";
+    }
+
+    if (!string.IsNullOrWhiteSpace(message.BotId))
+    {
+        return "bot_message";
+    }
+
+    if (string.IsNullOrWhiteSpace(message.User))
+    {
+        return "missing_user";
+    }
+
+    if (!string.IsNullOrWhiteSpace(expectedUserId)
+        && !string.Equals(message.User, expectedUserId, StringComparison.Ordinal))
+    {
+        return $"user_mismatch(expected:{expectedUserId})";
+    }
+
+    return null;
 }
 
 static decimal ParseTimestamp(string timestamp)
@@ -309,18 +427,19 @@ static void WriteLine(string message)
     Console.WriteLine($"[{DateTimeOffset.Now:O}] {message}");
 }
 
+static string CurrentSlackTimestamp()
+{
+    var now = DateTimeOffset.UtcNow;
+    return $"{now.ToUnixTimeSeconds()}.{now.Millisecond * 1000:D6}";
+}
+
 internal sealed class HarnessConfiguration
 {
     public SlackHarnessSettings Slack { get; set; } = new();
 
     public static HarnessConfiguration Load()
     {
-        var path = Path.Combine(Directory.GetCurrentDirectory(), "appsettings.json");
-        if (!File.Exists(path))
-        {
-            throw new FileNotFoundException(
-                $"Missing configuration file: {path}. Create appsettings.json from the local filler template.");
-        }
+        var path = ResolveConfigPath();
 
         var json = File.ReadAllText(path);
         var configuration = JsonSerializer.Deserialize<HarnessConfiguration>(json, new JsonSerializerOptions
@@ -333,30 +452,59 @@ internal sealed class HarnessConfiguration
         configuration.Slack.Validate();
         return configuration;
     }
+
+    private static string ResolveConfigPath()
+    {
+        var tried = new List<string>();
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            Directory.GetCurrentDirectory(),
+            AppContext.BaseDirectory
+        };
+
+        foreach (var root in roots)
+        {
+            var current = root;
+            while (!string.IsNullOrWhiteSpace(current))
+            {
+                var direct = Path.Combine(current, "appsettings.json");
+                tried.Add(direct);
+                if (File.Exists(direct))
+                {
+                    return direct;
+                }
+
+                var nested = Path.Combine(current, "tests", "SlackAgentSharp.E2E", "appsettings.json");
+                tried.Add(nested);
+                if (File.Exists(nested))
+                {
+                    return nested;
+                }
+
+                current = Directory.GetParent(current)?.FullName;
+            }
+        }
+
+        throw new FileNotFoundException(
+            "Missing configuration file appsettings.json. Tried: " + string.Join("; ", tried.Distinct(StringComparer.OrdinalIgnoreCase)));
+    }
 }
 
 internal sealed class SlackHarnessSettings
 {
     public string BotToken { get; set; } = string.Empty;
     public string UserId { get; set; } = string.Empty;
-    public string ChannelId { get; set; } = string.Empty;
-    public string ThreadTimestamp { get; set; } = string.Empty;
-    public string RecipientUserId { get; set; } = string.Empty;
-    public string ListenFromTimestamp { get; set; } = string.Empty;
     public int PollingDelaySeconds { get; set; } = 5;
     public int SimulatedProcessingDelayMilliseconds { get; set; } = 1200;
     public int StreamChunkDelayMilliseconds { get; set; } = 60;
     public int StreamChunkSize { get; set; } = 20;
     public string ThinkingStatus { get; set; } = "is thinking";
-    public string CompletedStatus { get; set; } = "ready";
     public string SuggestedPromptsTitle { get; set; } = "Try one of these follow-ups";
 
     public void Validate()
     {
         Require(BotToken, nameof(BotToken));
         Require(UserId, nameof(UserId));
-        Require(ChannelId, nameof(ChannelId));
-        Require(ThreadTimestamp, nameof(ThreadTimestamp));
     }
 
     private static void Require(string value, string name)
