@@ -9,6 +9,8 @@ public sealed class SlackOutputStreamManager
     private readonly string _channelId;
     private readonly string _threadTimestamp;
     private readonly string _recipientUserId;
+    // Serializes state transitions across block/chunk lifecycle methods.
+    private readonly SemaphoreSlim _stateSemaphore = new(1, 1);
     // Guards lazy stream-session creation so concurrent chunks don't start multiple Slack streams.
     private readonly SemaphoreSlim _startSemaphore = new(1, 1);
     private SlackStreamSession? _currentSession;
@@ -71,16 +73,24 @@ public sealed class SlackOutputStreamManager
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public async Task OnOutputBlockStarted(CancellationToken cancellationToken)
     {
-        if (_currentSession is not null)
+        await _stateSemaphore.WaitAsync(cancellationToken);
+        try
         {
-            await _currentSession.StopAsync(null, cancellationToken);
-            _currentSession = null;
-        }
+            if (_currentSession is not null)
+            {
+                await _currentSession.StopAsync(null, cancellationToken);
+                _currentSession = null;
+            }
 
-        _suppressBlock = false;
-        _decisionMade = false;
-        _startNotified = false;
-        _pendingBuffer = new StringBuilder();
+            _suppressBlock = false;
+            _decisionMade = false;
+            _startNotified = false;
+            _pendingBuffer = new StringBuilder();
+        }
+        finally
+        {
+            _stateSemaphore.Release();
+        }
     }
 
     /// <summary>
@@ -104,67 +114,75 @@ public sealed class SlackOutputStreamManager
         Func<CancellationToken, Task>? outputStarted,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(chunk))
+        await _stateSemaphore.WaitAsync(cancellationToken);
+        try
         {
-            return;
-        }
-
-        if (_suppressBlock)
-        {
-            return;
-        }
-
-        if (!_decisionMade)
-        {
-            _pendingBuffer ??= new StringBuilder();
-            _pendingBuffer.Append(chunk);
-
-            var decision = _outputChunkFilter.EvaluateBufferedOutput(_pendingBuffer.ToString());
-            if (decision == OutputChunkFilterDecision.Undecided)
+            if (string.IsNullOrEmpty(chunk))
             {
                 return;
             }
 
-            _decisionMade = true;
-            if (decision == OutputChunkFilterDecision.Suppress)
+            if (_suppressBlock)
             {
-                _suppressBlock = true;
+                return;
+            }
+
+            if (!_decisionMade)
+            {
+                _pendingBuffer ??= new StringBuilder();
+                _pendingBuffer.Append(chunk);
+
+                var decision = _outputChunkFilter.EvaluateBufferedOutput(_pendingBuffer.ToString());
+                if (decision == OutputChunkFilterDecision.Undecided)
+                {
+                    return;
+                }
+
+                _decisionMade = true;
+                if (decision == OutputChunkFilterDecision.Suppress)
+                {
+                    _suppressBlock = true;
+                    _pendingBuffer.Clear();
+                    return;
+                }
+
+                if (!_startNotified && outputStarted is not null)
+                {
+                    _startNotified = true;
+                    await outputStarted(cancellationToken);
+                }
+
+                _currentSession = await EnsureSessionAsync(cancellationToken);
+                if (_currentSession is not null)
+                {
+                    Interlocked.Exchange(ref _hadOutput, 1);
+                    await _currentSession.AppendAsync(_pendingBuffer.ToString(), cancellationToken);
+                }
+
                 _pendingBuffer.Clear();
                 return;
             }
 
-            if (!_startNotified && outputStarted is not null)
+            if (_currentSession is null)
             {
-                _startNotified = true;
-                await outputStarted(cancellationToken);
+                _currentSession = await EnsureSessionAsync(cancellationToken);
             }
 
-            _currentSession = await EnsureSessionAsync(cancellationToken);
             if (_currentSession is not null)
             {
+                if (!_startNotified && outputStarted is not null)
+                {
+                    _startNotified = true;
+                    await outputStarted(cancellationToken);
+                }
+
                 Interlocked.Exchange(ref _hadOutput, 1);
-                await _currentSession.AppendAsync(_pendingBuffer.ToString(), cancellationToken);
+                await _currentSession.AppendAsync(chunk, cancellationToken);
             }
-
-            _pendingBuffer.Clear();
-            return;
         }
-
-        if (_currentSession is null)
+        finally
         {
-            _currentSession = await EnsureSessionAsync(cancellationToken);
-        }
-
-        if (_currentSession is not null)
-        {
-            if (!_startNotified && outputStarted is not null)
-            {
-                _startNotified = true;
-                await outputStarted(cancellationToken);
-            }
-
-            Interlocked.Exchange(ref _hadOutput, 1);
-            await _currentSession.AppendAsync(chunk, cancellationToken);
+            _stateSemaphore.Release();
         }
     }
 
@@ -174,20 +192,28 @@ public sealed class SlackOutputStreamManager
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
     public async Task OnOutputBlockEnded(CancellationToken cancellationToken)
     {
-        if (_currentSession is null)
+        await _stateSemaphore.WaitAsync(cancellationToken);
+        try
         {
+            if (_currentSession is null)
+            {
+                _suppressBlock = false;
+                _decisionMade = false;
+                _pendingBuffer?.Clear();
+                return;
+            }
+
+            await _currentSession.StopAsync(null, cancellationToken);
+            _currentSession = null;
             _suppressBlock = false;
             _decisionMade = false;
+            _startNotified = false;
             _pendingBuffer?.Clear();
-            return;
         }
-
-        await _currentSession.StopAsync(null, cancellationToken);
-        _currentSession = null;
-        _suppressBlock = false;
-        _decisionMade = false;
-        _startNotified = false;
-        _pendingBuffer?.Clear();
+        finally
+        {
+            _stateSemaphore.Release();
+        }
     }
 
     /// <summary>
