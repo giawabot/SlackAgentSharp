@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading.Channels;
 
@@ -59,7 +60,9 @@ internal sealed class SlackStreamSession
 
     public Task AppendAsync(string text, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(text) || _consumerFailed)
+        ThrowIfConsumerFailed();
+
+        if (string.IsNullOrEmpty(text))
         {
             return Task.CompletedTask;
         }
@@ -115,13 +118,15 @@ internal sealed class SlackStreamSession
         {
         }
 
-        if (_consumerException is not null)
+        var stopped = await _slackClient.StopMessageStreamAsync(_channelId, _streamTimestamp, markdownText: null, cancellationToken);
+        _consumerCancellation.Dispose();
+
+        if (!stopped)
         {
-            Console.WriteLine($"Slack stream consumer failed: {_consumerException.Message}");
+            throw new InvalidOperationException("Slack rejected the stream stop request.");
         }
 
-        await _slackClient.StopMessageStreamAsync(_channelId, _streamTimestamp, markdownText: null, cancellationToken);
-        _consumerCancellation.Dispose();
+        ThrowIfConsumerFailed();
     }
 
     private async Task ConsumeAsync(CancellationToken cancellationToken)
@@ -135,7 +140,11 @@ internal sealed class SlackStreamSession
                     continue;
                 }
 
-                await _slackClient.AppendMessageStreamAsync(_channelId, _streamTimestamp, payload, cancellationToken);
+                var appended = await _slackClient.AppendMessageStreamAsync(_channelId, _streamTimestamp, payload, cancellationToken);
+                if (!appended)
+                {
+                    throw new InvalidOperationException("Slack rejected a stream append request.");
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -147,6 +156,15 @@ internal sealed class SlackStreamSession
             _consumerFailed = true;
         }
     }
+
+    private void ThrowIfConsumerFailed()
+    {
+        if (!_consumerFailed)
+        {
+            return;
+        }
+
+        var exception = _consumerException ?? new InvalidOperationException("Slack stream consumer failed.");
+        ExceptionDispatchInfo.Capture(exception).Throw();
+    }
 }
-
-
