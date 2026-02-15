@@ -123,6 +123,11 @@ public sealed class SlackClient : IDisposable
         string userId,
         CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            throw new ArgumentException("Slack user ID is required.", nameof(userId));
+        }
+
         var payload = JsonSerializer.Serialize(new SlackConversationOpenRequest(userId), _serializerOptions);
         using var response = await SendPostAsync("conversations.open", payload, cancellationToken, RetryMode.RateLimitOnly);
         var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
