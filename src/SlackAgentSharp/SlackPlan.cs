@@ -5,6 +5,7 @@ public sealed class SlackPlan
     private readonly SlackClient _slackClient;
     private readonly string _channelId;
     private readonly string _threadTimestamp;
+    private readonly SemaphoreSlim _sendSemaphore = new(1, 1);
     private string? _messageTimestamp;
 
     /// <summary>
@@ -27,12 +28,7 @@ public sealed class SlackPlan
     /// <param name="token">Token used to cancel the operation.</param>
     public Task SendInitialAsync(SlackTaskPlan plan, CancellationToken token)
     {
-        if (!string.IsNullOrWhiteSpace(_messageTimestamp))
-        {
-            return Task.CompletedTask;
-        }
-
-        return SendAsync(plan, token, isUpdate: false);
+        return SendSerializedAsync(plan, token, preferUpdate: false);
     }
 
     /// <summary>
@@ -42,35 +38,43 @@ public sealed class SlackPlan
     /// <param name="token">Token used to cancel the operation.</param>
     public Task SendTaskUpdatesAsync(SlackTaskPlan plan, CancellationToken token)
     {
-        if (string.IsNullOrWhiteSpace(_messageTimestamp))
-        {
-            return SendAsync(plan, token, isUpdate: false);
-        }
-
-        return SendAsync(plan, token, isUpdate: true);
+        return SendSerializedAsync(plan, token, preferUpdate: true);
     }
 
-    private async Task SendAsync(SlackTaskPlan plan, CancellationToken token, bool isUpdate)
+    private async Task SendSerializedAsync(SlackTaskPlan plan, CancellationToken token, bool preferUpdate)
     {
-        var blocks = BuildBlocks(plan);
-        if (isUpdate && !string.IsNullOrWhiteSpace(_messageTimestamp))
+        await _sendSemaphore.WaitAsync(token);
+        try
         {
-            var updated = await _slackClient.UpdateMessageBlocksAsync(_channelId, _messageTimestamp!, null, blocks, token);
-            if (updated)
+            if (!preferUpdate && !string.IsNullOrWhiteSpace(_messageTimestamp))
             {
                 return;
             }
 
-            // Recover if the prior message was deleted or is otherwise no longer updatable.
-            _messageTimestamp = null;
-        }
+            var blocks = BuildBlocks(plan);
+            if (preferUpdate && !string.IsNullOrWhiteSpace(_messageTimestamp))
+            {
+                var updated = await _slackClient.UpdateMessageBlocksAsync(_channelId, _messageTimestamp!, null, blocks, token);
+                if (updated)
+                {
+                    return;
+                }
 
-        _messageTimestamp = await _slackClient.SendMessageWithBlocksAsync(
-            _channelId,
-            null,
-            blocks,
-            _threadTimestamp,
-            token);
+                // Recover if the prior message was deleted or is otherwise no longer updatable.
+                _messageTimestamp = null;
+            }
+
+            _messageTimestamp = await _slackClient.SendMessageWithBlocksAsync(
+                _channelId,
+                null,
+                blocks,
+                _threadTimestamp,
+                token);
+        }
+        finally
+        {
+            _sendSemaphore.Release();
+        }
     }
 
     private static string ToSlackStatus(SlackTaskStatus status) =>
