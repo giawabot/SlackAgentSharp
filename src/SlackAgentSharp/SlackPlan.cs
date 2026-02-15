@@ -55,8 +55,14 @@ public sealed class SlackPlan
         var blocks = BuildBlocks(plan);
         if (isUpdate && !string.IsNullOrWhiteSpace(_messageTimestamp))
         {
-            await _slackClient.UpdateMessageBlocksAsync(_channelId, _messageTimestamp!, null, blocks, token);
-            return;
+            var updated = await _slackClient.UpdateMessageBlocksAsync(_channelId, _messageTimestamp!, null, blocks, token);
+            if (updated)
+            {
+                return;
+            }
+
+            // Recover if the prior message was deleted or is otherwise no longer updatable.
+            _messageTimestamp = null;
         }
 
         _messageTimestamp = await _slackClient.SendMessageWithBlocksAsync(
