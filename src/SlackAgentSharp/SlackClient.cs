@@ -8,6 +8,12 @@ namespace SlackAgentSharp;
 
 public sealed class SlackClient : IDisposable
 {
+    private enum RetryMode
+    {
+        RateLimitOnly,
+        TransientRetry
+    }
+
     private const string SlackApiBaseUrl = "https://slack.com/api/";
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _serializerOptions;
@@ -118,7 +124,7 @@ public sealed class SlackClient : IDisposable
         CancellationToken cancellationToken)
     {
         var payload = JsonSerializer.Serialize(new SlackConversationOpenRequest(userId), _serializerOptions);
-        using var response = await SendPostAsync("conversations.open", payload, cancellationToken);
+        using var response = await SendPostAsync("conversations.open", payload, cancellationToken, RetryMode.RateLimitOnly);
         var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
         if (responseBody is null)
         {
@@ -631,7 +637,7 @@ public sealed class SlackClient : IDisposable
         string payload,
         CancellationToken cancellationToken)
     {
-        using var response = await SendPostAsync("chat.postMessage", payload, cancellationToken);
+        using var response = await SendPostAsync("chat.postMessage", payload, cancellationToken, RetryMode.RateLimitOnly);
         var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
         if (responseBody is null)
         {
@@ -657,7 +663,7 @@ public sealed class SlackClient : IDisposable
         string payload,
         CancellationToken cancellationToken)
     {
-        using var response = await SendPostAsync(endpoint, payload, cancellationToken);
+        using var response = await SendPostAsync(endpoint, payload, cancellationToken, RetryMode.RateLimitOnly);
         var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
         if (responseBody is null)
         {
@@ -682,7 +688,7 @@ public sealed class SlackClient : IDisposable
         string payload,
         CancellationToken cancellationToken)
     {
-        using var response = await SendPostAsync("chat.update", payload, cancellationToken);
+        using var response = await SendPostAsync("chat.update", payload, cancellationToken, RetryMode.RateLimitOnly);
         var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
         if (responseBody is null)
         {
@@ -708,7 +714,7 @@ public sealed class SlackClient : IDisposable
         string payload,
         CancellationToken cancellationToken)
     {
-        using var response = await SendPostAsync(endpoint, payload, cancellationToken);
+        using var response = await SendPostAsync(endpoint, payload, cancellationToken, RetryMode.RateLimitOnly);
         var responseBody = await TryReadResponseBodyAsync(response.Content, cancellationToken);
         if (responseBody is null)
         {
@@ -755,10 +761,15 @@ public sealed class SlackClient : IDisposable
     {
         return SendWithRetryAsync(
             () => new HttpRequestMessage(HttpMethod.Get, requestUri),
+            RetryMode.TransientRetry,
             cancellationToken);
     }
 
-    private Task<HttpResponseMessage> SendPostAsync(string endpoint, string payload, CancellationToken cancellationToken)
+    private Task<HttpResponseMessage> SendPostAsync(
+        string endpoint,
+        string payload,
+        CancellationToken cancellationToken,
+        RetryMode retryMode)
     {
         return SendWithRetryAsync(
             () =>
@@ -769,11 +780,13 @@ public sealed class SlackClient : IDisposable
                 };
                 return request;
             },
+            retryMode,
             cancellationToken);
     }
 
     private async Task<HttpResponseMessage> SendWithRetryAsync(
         Func<HttpRequestMessage> requestFactory,
+        RetryMode retryMode,
         CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt <= _transientRetryCount; attempt++)
@@ -790,26 +803,42 @@ public sealed class SlackClient : IDisposable
                     HttpCompletionOption.ResponseHeadersRead,
                     timeoutToken.Token);
 
-                if (attempt < _transientRetryCount && IsTransientStatusCode(response.StatusCode))
+                if (attempt < _transientRetryCount && ShouldRetryStatusCode(response.StatusCode, retryMode))
                 {
+                    var delay = GetRetryDelay(response, attempt);
                     response.Dispose();
-                    await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
+                    await Task.Delay(delay, cancellationToken);
                     continue;
                 }
 
                 return response;
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < _transientRetryCount)
+            catch (OperationCanceledException) when (
+                retryMode == RetryMode.TransientRetry
+                && !cancellationToken.IsCancellationRequested
+                && attempt < _transientRetryCount)
             {
                 await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
             }
-            catch (HttpRequestException) when (attempt < _transientRetryCount)
+            catch (HttpRequestException) when (
+                retryMode == RetryMode.TransientRetry
+                && attempt < _transientRetryCount)
             {
                 await Task.Delay(ComputeRetryDelay(attempt), cancellationToken);
             }
         }
 
         throw new InvalidOperationException("Retry loop exited unexpectedly.");
+    }
+
+    private static bool ShouldRetryStatusCode(HttpStatusCode statusCode, RetryMode retryMode)
+    {
+        return retryMode switch
+        {
+            RetryMode.RateLimitOnly => statusCode == HttpStatusCode.TooManyRequests,
+            RetryMode.TransientRetry => IsTransientStatusCode(statusCode),
+            _ => false
+        };
     }
 
     private static bool IsTransientStatusCode(HttpStatusCode statusCode)
@@ -820,6 +849,29 @@ public sealed class SlackClient : IDisposable
             || statusCode == HttpStatusCode.ServiceUnavailable
             || statusCode == HttpStatusCode.GatewayTimeout
             || (int)statusCode >= 500;
+    }
+
+    private TimeSpan GetRetryDelay(HttpResponseMessage response, int attempt)
+    {
+        if (response.StatusCode == HttpStatusCode.TooManyRequests
+            && response.Headers.RetryAfter is { } retryAfter)
+        {
+            if (retryAfter.Delta is TimeSpan delta && delta > TimeSpan.Zero)
+            {
+                return delta;
+            }
+
+            if (retryAfter.Date is DateTimeOffset retryAt)
+            {
+                var wait = retryAt - DateTimeOffset.UtcNow;
+                if (wait > TimeSpan.Zero)
+                {
+                    return wait;
+                }
+            }
+        }
+
+        return ComputeRetryDelay(attempt);
     }
 
     private TimeSpan ComputeRetryDelay(int attempt)
