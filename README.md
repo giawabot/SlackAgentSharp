@@ -93,6 +93,7 @@ Set `SlackOptions.BotToken` to a valid bot token (for example, `xoxb-...`). Keep
 
 ### Transport and Resilience
 - Requests use retry-aware per-attempt timeouts from `SlackOptions` (`RequestTimeoutSeconds`, `TransientRetryCount`, `RetryDelayMilliseconds`).
+- Idempotent reads use transient retries; mutation POST APIs are limited to rate-limit retries (`429`) and honor Slack `Retry-After` when present.
 - Response bodies are size-capped via `MaxResponseBodyBytes`.
 
 ## Notes
@@ -105,3 +106,4 @@ That workflow builds the library in `Release` mode and attaches a zip bundle (DL
 
 ## Contributing
 Pull requests and issues are open and accepted on this project.
+For internal end-to-end Slack verification, see `tests/SlackAgentSharp.E2E/README.md`.

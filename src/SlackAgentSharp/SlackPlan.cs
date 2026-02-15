@@ -5,6 +5,7 @@ public sealed class SlackPlan
     private readonly SlackClient _slackClient;
     private readonly string _channelId;
     private readonly string _threadTimestamp;
+    // Guards _messageTimestamp and makes initial-send/update ordering deterministic.
     private readonly SemaphoreSlim _sendSemaphore = new(1, 1);
     private string? _messageTimestamp;
 

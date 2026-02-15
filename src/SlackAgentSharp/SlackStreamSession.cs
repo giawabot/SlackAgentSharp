@@ -81,6 +81,7 @@ internal sealed class SlackStreamSession
             _pendingBuffer.Clear();
         }
 
+        // Write outside the lock so backpressure doesn't block other appenders from checking state.
         return WritePayloadAsync(payload, cancellationToken);
     }
 

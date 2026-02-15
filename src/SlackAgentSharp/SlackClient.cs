@@ -8,6 +8,7 @@ namespace SlackAgentSharp;
 
 public sealed class SlackClient : IDisposable
 {
+    // Retry tiers: read calls can retry transient faults; mutation calls are limited to 429 to reduce duplicate side effects.
     private enum RetryMode
     {
         RateLimitOnly,

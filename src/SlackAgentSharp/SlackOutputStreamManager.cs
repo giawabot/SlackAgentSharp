@@ -10,6 +10,7 @@ public sealed class SlackOutputStreamManager
     private readonly string _channelId;
     private readonly string _threadTimestamp;
     private readonly string _recipientUserId;
+    // Run all lifecycle/chunk operations on one worker to avoid lock+await race patterns.
     private readonly Channel<WorkItem> _workChannel = Channel.CreateUnbounded<WorkItem>(new UnboundedChannelOptions
     {
         SingleReader = true,
