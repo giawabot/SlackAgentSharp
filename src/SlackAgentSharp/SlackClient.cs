@@ -638,15 +638,15 @@ public sealed class SlackClient : IDisposable
             return new SlackApiResponse(false, null, "response_too_large");
         }
 
+        var messageResponse = TryDeserializeSlackApiResponse(responseBody);
         if (!response.IsSuccessStatusCode)
         {
-            return new SlackApiResponse(false, null, "http_error");
+            return new SlackApiResponse(false, null, BuildHttpError(response.StatusCode, messageResponse?.Error));
         }
 
-        var messageResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
         if (messageResponse is null || !messageResponse.Ok)
         {
-            return new SlackApiResponse(false, null, messageResponse?.Error);
+            return new SlackApiResponse(false, null, messageResponse?.Error ?? "invalid_json");
         }
 
         return messageResponse;
@@ -664,15 +664,15 @@ public sealed class SlackClient : IDisposable
             return new SlackApiResponse(false, null, "response_too_large");
         }
 
+        var streamResponse = TryDeserializeSlackApiResponse(responseBody);
         if (!response.IsSuccessStatusCode)
         {
-            return new SlackApiResponse(false, null, "http_error");
+            return new SlackApiResponse(false, null, BuildHttpError(response.StatusCode, streamResponse?.Error));
         }
 
-        var streamResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
         if (streamResponse is null || !streamResponse.Ok)
         {
-            return new SlackApiResponse(false, null, streamResponse?.Error);
+            return new SlackApiResponse(false, null, streamResponse?.Error ?? "invalid_json");
         }
 
         return streamResponse;
@@ -689,15 +689,15 @@ public sealed class SlackClient : IDisposable
             return new SlackApiResponse(false, null, "response_too_large");
         }
 
+        var updateResponse = TryDeserializeSlackApiResponse(responseBody);
         if (!response.IsSuccessStatusCode)
         {
-            return new SlackApiResponse(false, null, "http_error");
+            return new SlackApiResponse(false, null, BuildHttpError(response.StatusCode, updateResponse?.Error));
         }
 
-        var updateResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
         if (updateResponse is null || !updateResponse.Ok)
         {
-            return new SlackApiResponse(false, null, updateResponse?.Error);
+            return new SlackApiResponse(false, null, updateResponse?.Error ?? "invalid_json");
         }
 
         return updateResponse;
@@ -715,18 +715,40 @@ public sealed class SlackClient : IDisposable
             return new SlackApiResponse(false, null, "response_too_large");
         }
 
+        var statusResponse = TryDeserializeSlackApiResponse(responseBody);
         if (!response.IsSuccessStatusCode)
         {
-            return new SlackApiResponse(false, null, "http_error");
+            return new SlackApiResponse(false, null, BuildHttpError(response.StatusCode, statusResponse?.Error));
         }
 
-        var statusResponse = JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
         if (statusResponse is null || !statusResponse.Ok)
         {
-            return new SlackApiResponse(false, null, statusResponse?.Error);
+            return new SlackApiResponse(false, null, statusResponse?.Error ?? "invalid_json");
         }
 
         return statusResponse;
+    }
+
+    private SlackApiResponse? TryDeserializeSlackApiResponse(string responseBody)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<SlackApiResponse>(responseBody, _serializerOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static string BuildHttpError(HttpStatusCode statusCode, string? slackError)
+    {
+        if (!string.IsNullOrWhiteSpace(slackError))
+        {
+            return slackError;
+        }
+
+        return $"http_{(int)statusCode}";
     }
 
     private Task<HttpResponseMessage> SendGetAsync(string requestUri, CancellationToken cancellationToken)
