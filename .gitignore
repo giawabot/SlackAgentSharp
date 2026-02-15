@@ -22,3 +22,5 @@ packages/
 # OS files
 .DS_Store
 Thumbs.db
+# Local E2E secrets
+tests/SlackAgentSharp.E2E/appsettings.json
